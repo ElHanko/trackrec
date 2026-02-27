@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+f="/run/user/$(id -u)/rec-loopback.module"
+[[ -f "$f" ]] && pactl unload-module "$(cat "$f")" 2>/dev/null || true
+rm -f "$f" 2>/dev/null || true

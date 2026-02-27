@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if pactl list short sinks | awk '{print $2}' | grep -qx "rec"; then
+  exit 0
+fi
+
+pactl load-module module-null-sink sink_name=rec sink_properties=device.description="REC (Recording Sink)"
