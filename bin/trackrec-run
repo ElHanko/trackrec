@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pattern="${1:-}"
+shift || true
+
+if [[ -z "$pattern" ]]; then
+  echo "Usage: trackrec-run <pattern> [--listen] [--out <dir>] [--min-seconds <n>] [--comp <0-8>] [--player <name>] [--no-follow] [--follow-interval <sec>] [--no-dedupe]"
+  exit 1
+fi
+
+# Defaults
+PLAYER="$pattern"
+OUTDIR="$HOME/recordings"
+MIN_SECONDS=30
+COMP=5
+LISTEN=0
+
+FOLLOW=1
+FOLLOW_INTERVAL=1
+
+DEDUPE=1   # <-- default ON
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --player) PLAYER="${2:-$PLAYER}"; shift 2;;
+    --out) OUTDIR="${2:-$OUTDIR}"; shift 2;;
+    --min-seconds) MIN_SECONDS="${2:-$MIN_SECONDS}"; shift 2;;
+    --comp) COMP="${2:-$COMP}"; shift 2;;
+    --listen) LISTEN=1; shift;;
+    --no-follow) FOLLOW=0; shift;;
+    --follow-interval) FOLLOW_INTERVAL="${2:-1}"; shift 2;;
+    --no-dedupe) DEDUPE=0; shift;;
+    *) echo "Unknown option: $1"; exit 2;;
+  esac
+done
+
+for cmd in trackrec-setup pactl trackrec-listen-on trackrec-listen-off mpris_flac_recorder.py; do
+  command -v "$cmd" >/dev/null 2>&1 || { echo "Missing command: $cmd"; exit 3; }
+done
+
+STATE_DIR="/run/user/$(id -u)/trackrec-run"
+MAP_FILE="$STATE_DIR/moved-streams.tsv"     # stream_id \t orig_sink_id
+SEEN_FILE="$STATE_DIR/seen-streams.txt"     # stream_ids we already processed
+mkdir -p "$STATE_DIR"
+: > "$MAP_FILE"
+: > "$SEEN_FILE"
+
+cleanup() {
+  set +e
+
+  [[ "$LISTEN" -eq 1 ]] && trackrec-listen-off >/dev/null 2>&1 || true
+
+  if [[ -n "${FOLLOW_PID:-}" ]]; then
+    kill "$FOLLOW_PID" >/dev/null 2>&1 || true
+    wait "$FOLLOW_PID" >/dev/null 2>&1 || true
+  fi
+
+  if [[ -s "$MAP_FILE" ]]; then
+    while IFS=$'\t' read -r sid orig_sink; do
+      pactl move-sink-input "$sid" "$orig_sink" >/dev/null 2>&1 || true
+    done < "$MAP_FILE"
+  fi
+
+  rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
+}
+trap cleanup EXIT INT TERM
+
+trackrec-setup
+
+pat_lc="$(echo "$pattern" | tr '[:upper:]' '[:lower:]')"
+
+match_and_move_new_streams() {
+  local ids id block orig_sink hay
+  ids="$(pactl list short sink-inputs | awk '{print $1}' || true)"
+  [[ -z "$ids" ]] && return 0
+
+  for id in $ids; do
+    if grep -qx "$id" "$SEEN_FILE" 2>/dev/null; then
+      continue
+    fi
+
+    block="$(pactl list sink-inputs | sed -n "/Sink Input #$id\b/,/^$/p")"
+    orig_sink="$(echo "$block" | sed -n 's/^[[:space:]]*Sink: \([0-9]\+\).*/\1/p' | head -n1)"
+    [[ -z "$orig_sink" ]] && { echo "$id" >> "$SEEN_FILE"; continue; }
+
+    hay="$(echo "$block" | sed -n 's/.*\(application.name\|application.process.binary\|media.name\) = "\(.*\)".*/\2/p' | tr '[:upper:]' '[:lower:]')"
+
+    if echo "$hay" | grep -q "$pat_lc"; then
+      printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
+      pactl move-sink-input "$id" rec
+    fi
+
+    echo "$id" >> "$SEEN_FILE"
+  done
+}
+
+match_and_move_new_streams
+if ! pactl list short sink-inputs | awk '{print $1}' | while read -r id; do grep -q "^$id\t" "$MAP_FILE" && exit 0; done; then
+  echo "No matching audio streams for '$pattern'. Start playback first."
+  exit 4
+fi
+
+if [[ "$LISTEN" -eq 1 ]]; then
+  trackrec-listen-on
+  echo "Listen: ON"
+else
+  echo "Listen: OFF (silent capture)"
+fi
+
+if [[ "$FOLLOW" -eq 1 ]]; then
+  (
+    while true; do
+      match_and_move_new_streams
+      sleep "$FOLLOW_INTERVAL"
+    done
+  ) &
+  FOLLOW_PID="$!"
+  echo "Follow: ON (interval ${FOLLOW_INTERVAL}s)"
+else
+  echo "Follow: OFF"
+fi
+
+echo "Recording '$pattern' → $OUTDIR"
+echo "Player: $PLAYER | min-seconds: $MIN_SECONDS | FLAC comp: $COMP | dedupe: $([[ "$DEDUPE" -eq 1 ]] && echo ON || echo OFF)"
+
+dedupe_args=()
+if [[ "$DEDUPE" -eq 1 ]]; then
+  dedupe_args+=(--dedupe)
+fi
+
+exec mpris_flac_recorder.py \
+  --source rec.monitor \
+  --out "$OUTDIR" \
+  --player "$PLAYER" \
+  --min-seconds "$MIN_SECONDS" \
+  --comp "$COMP" \
+  "${dedupe_args[@]}"

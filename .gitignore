@@ -1,0 +1,20 @@
+# runtime / state
+*.pyc
+__pycache__/
+*.log
+
+# editor junk
+.vscode/
+.idea/
+.DS_Store
+
+# recordings / local data
+recordings/
+*.flac
+
+# dedupe index is local state
+.spotify_index
+
+# temp / backups
+*~
+*.swp

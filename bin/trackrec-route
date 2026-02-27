@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+pattern="${1:-}"
+[[ -z "$pattern" ]] && { echo "Usage: route-to-rec <pattern>"; exit 1; }
+
+if ! pactl list short sinks | awk '{print $2}' | grep -qx "rec"; then
+  echo "rec sink missing (run rec-setup)"
+  exit 2
+fi
+
+ids="$(pactl list short sink-inputs | awk '{print $1}')"
+[[ -z "$ids" ]] && { echo "No active audio streams"; exit 3; }
+
+matched=0
+for id in $ids; do
+  block="$(pactl list sink-inputs | sed -n "/Sink Input #$id\b/,/^$/p")"
+  hay="$(echo "$block" | sed -n 's/.*\(application.name\|application.process.binary\|media.name\) = "\(.*\)".*/\2/p' | tr '[:upper:]' '[:lower:]')"
+  if echo "$hay" | grep -q "$(echo "$pattern" | tr '[:upper:]' '[:lower:]')"; then
+    pactl move-sink-input "$id" rec
+    matched=$((matched+1))
+  fi
+done
+
+[[ "$matched" -eq 0 ]] && { echo "No matches for '$pattern'"; exit 4; }

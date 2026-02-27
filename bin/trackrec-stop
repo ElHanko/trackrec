@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Stop recorder processes
+pkill -INT -f 'mpris_flac_recorder\.py' 2>/dev/null || true
+
+# Stop loopback if present
+command -v listen-off >/dev/null 2>&1 && listen-off >/dev/null 2>&1 || true
+
+# Try rollback if state exists
+STATE_DIR="/run/user/$(id -u)/rec-run"
+MAP_FILE="$STATE_DIR/moved-streams.tsv"
+
+if [[ -s "$MAP_FILE" ]]; then
+  while IFS=$'\t' read -r stream_id orig_sink; do
+    pactl move-sink-input "$stream_id" "$orig_sink" >/dev/null 2>&1 || true
+  done < "$MAP_FILE"
+fi
+
+rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
+echo "rec-stop: done"

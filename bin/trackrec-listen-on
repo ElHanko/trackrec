@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+default_sink="$(pactl info | sed -n 's/^Default Sink: //p')"
+[[ -z "$default_sink" ]] && { echo "No default sink"; exit 1; }
+
+if pactl list short modules | grep -q "module-loopback.*rec.monitor"; then
+  exit 0
+fi
+
+id="$(pactl load-module module-loopback source=rec.monitor sink="$default_sink" latency_msec=10)"
+echo "$id" > /run/user/$(id -u)/rec-loopback.module

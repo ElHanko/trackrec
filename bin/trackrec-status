@@ -1,0 +1,343 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# rec-status [--json] [--watch [SECONDS]]
+JSON=0
+WATCH=0
+INTERVAL=1
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) JSON=1; shift;;
+    --watch) WATCH=1; shift; if [[ "${1:-}" =~ ^[0-9]+$ ]]; then INTERVAL="$1"; shift; fi;;
+    *) echo "Unknown option: $1"; exit 2;;
+  esac
+done
+
+need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing command: $1"; exit 3; }; }
+need_cmd pactl
+need_cmd pgrep
+need_cmd awk
+need_cmd sed
+need_cmd grep
+
+u="$(id -u)"
+STATE_DIR="/run/user/$u/trackrec-run"
+MAP_FILE="$STATE_DIR/moved-streams.tsv"
+STATUS_FILE="$STATE_DIR/recorder.status"
+LOOP_FILE="/run/user/$u/rec-loopback.module"
+
+json_escape() {
+  local s="${1:-}"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+fmt_epoch() {
+  local ts="$1"
+  [[ -z "$ts" || ! "$ts" =~ ^[0-9]+$ ]] && return 0
+  date -d "@$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true
+}
+
+since_epoch() {
+  local ts="$1"
+  [[ -z "$ts" || ! "$ts" =~ ^[0-9]+$ ]] && return 0
+  local now delta
+  now="$(date +%s)"
+  delta=$(( now - ts ))
+  (( delta < 0 )) && delta=0
+  printf '%dm%02ds' $((delta/60)) $((delta%60))
+}
+
+get_server() { pactl info | sed -n 's/^Server Name: //p' || true; }
+get_default_sink() { pactl info | sed -n 's/^Default Sink: //p' || true; }
+get_default_source() { pactl info | sed -n 's/^Default Source: //p' || true; }
+
+rec_present() {
+  pactl list short sinks | awk '{print $2}' | grep -qx "rec" && echo 1 || echo 0
+}
+recmon_present() {
+  pactl list short sources | awk '{print $2}' | grep -qx "rec.monitor" && echo 1 || echo 0
+}
+get_rec_sink_id() {
+  pactl list short sinks | awk '$2=="rec"{print $1}' | head -n1 || true
+}
+
+loopback_status() {
+  # prints: "0|" or "1|<moduleid_or_empty>"
+  if [[ -f "$LOOP_FILE" ]]; then
+    local mid
+    mid="$(cat "$LOOP_FILE" 2>/dev/null || true)"
+    echo "1|$mid"
+    return
+  fi
+  # fallback detection
+  if pactl list short modules | awk '{print $2}' | grep -qx "module-loopback"; then
+    if pactl list modules | grep -q "source=rec.monitor"; then
+      echo "1|"
+      return
+    fi
+  fi
+  echo "0|"
+}
+
+recorder_lines() {
+  pgrep -af 'mpris_flac_recorder\.py' 2>/dev/null || true
+}
+
+streams_routed_to_rec() {
+  # outputs TSV lines: id\tapp\tbin\tmedia
+  local rec_id ids id block sink app bin media
+  rec_id="$(get_rec_sink_id)"
+  [[ -z "$rec_id" ]] && return 0
+
+  ids="$(pactl list short sink-inputs | awk '{print $1}' || true)"
+  [[ -z "$ids" ]] && return 0
+
+  for id in $ids; do
+    block="$(pactl list sink-inputs | sed -n "/Sink Input #$id\b/,/^$/p")"
+    sink="$(echo "$block" | sed -n 's/^[[:space:]]*Sink: \([0-9]\+\).*/\1/p' | head -n1)"
+    if [[ "$sink" == "$rec_id" ]]; then
+      app="$(echo "$block" | sed -n 's/.*application.name = "\(.*\)".*/\1/p' | head -n1)"
+      bin="$(echo "$block" | sed -n 's/.*application.process.binary = "\(.*\)".*/\1/p' | head -n1)"
+      media="$(echo "$block" | sed -n 's/.*media.name = "\(.*\)".*/\1/p' | head -n1)"
+      printf "%s\t%s\t%s\t%s\n" "$id" "${app:-}" "${bin:-}" "${media:-}"
+    fi
+  done
+}
+
+moved_streams_map() {
+  # outputs TSV: id\torig_sink
+  [[ -f "$MAP_FILE" ]] && cat "$MAP_FILE" || true
+}
+
+read_recorder_status() {
+  # prints key=value lines or nothing
+  [[ -f "$STATUS_FILE" ]] && cat "$STATUS_FILE" || true
+}
+
+render_human() {
+  local server def_sink def_src rp rmp rec_id loop_raw loop_on loop_mid rec_lines
+  server="$(get_server)"
+  def_sink="$(get_default_sink)"
+  def_src="$(get_default_source)"
+  rp="$(rec_present)"
+  rmp="$(recmon_present)"
+  rec_id="$(get_rec_sink_id)"
+  loop_raw="$(loopback_status)"
+  loop_on="${loop_raw%%|*}"
+  loop_mid="${loop_raw#*|}"
+  rec_lines="$(recorder_lines)"
+
+  echo "== rec-status =="
+  echo
+  echo "-- PipeWire/Pulse --"
+  echo "Server:  ${server:-unknown}"
+  echo "Default: sink=${def_sink:-?} source=${def_src:-?}"
+
+  echo
+  echo "-- rec sink --"
+  [[ "$rp" -eq 1 ]] && echo "rec sink: PRESENT" || echo "rec sink: MISSING"
+  [[ "$rmp" -eq 1 ]] && echo "rec.monitor: PRESENT" || echo "rec.monitor: MISSING"
+
+  echo
+  echo "-- listen (loopback) --"
+  if [[ "$loop_on" -eq 1 ]]; then
+    [[ -n "$loop_mid" ]] && echo "loopback: ON (module id: $loop_mid)" || echo "loopback: ON"
+  else
+    echo "loopback: OFF"
+  fi
+
+  echo
+  echo "-- recorder --"
+  if [[ -n "$rec_lines" ]]; then
+    echo "mpris_flac_recorder.py: RUNNING"
+    while IFS= read -r line; do [[ -n "$line" ]] && echo "  $line"; done <<< "$rec_lines"
+  else
+    echo "mpris_flac_recorder.py: not running"
+  fi
+
+  echo
+  echo "-- recorder state --"
+  if [[ -f "$STATUS_FILE" ]]; then
+    while IFS='=' read -r k v; do
+      case "$k" in
+        STARTED_AT)
+          human="$(fmt_epoch "$v")"
+          since="$(since_epoch "$v")"
+          if [[ -n "$human" ]]; then
+            echo "  STARTED_AT=$human (since $since)"
+          else
+            echo "  STARTED_AT=$v"
+          fi
+          ;;
+        *)
+          echo "  $k=$v"
+          ;;
+      esac
+    done < "$STATUS_FILE"
+  else
+    echo "  (no recorder status)"
+  fi
+
+  echo
+  echo "-- streams routed to rec (current) --"
+  if [[ -z "$rec_id" ]]; then
+    echo "n/a (rec sink missing)"
+  else
+    local any=0
+    while IFS=$'\t' read -r sid app bin media; do
+      [[ -z "$sid" ]] && continue
+      echo "  #$sid  app='${app:-?}' bin='${bin:-?}' media='${media:-?}'"
+      any=1
+    done < <(streams_routed_to_rec)
+    [[ "$any" -eq 0 ]] && echo "(none routed to rec)"
+  fi
+
+  echo
+  echo "-- rec-run state --"
+  [[ -d "$STATE_DIR" ]] && echo "state dir: PRESENT ($STATE_DIR)" || echo "state dir: not present"
+  if [[ -f "$MAP_FILE" ]]; then
+    echo "moved-streams map:"
+    if [[ -s "$MAP_FILE" ]]; then
+      while IFS=$'\t' read -r sid orig; do
+        [[ -z "$sid" ]] && continue
+        echo "  sink-input #$sid -> orig sink id $orig"
+      done < "$MAP_FILE"
+    else
+      echo "  (empty)"
+    fi
+  else
+    echo "moved-streams map: not present"
+  fi
+}
+
+render_json() {
+  local server def_sink def_src rp rmp rec_id loop_raw loop_on loop_mid rec_lines
+  server="$(get_server)"
+  def_sink="$(get_default_sink)"
+  def_src="$(get_default_source)"
+  rp="$(rec_present)"
+  rmp="$(recmon_present)"
+  rec_id="$(get_rec_sink_id)"
+  loop_raw="$(loopback_status)"
+  loop_on="${loop_raw%%|*}"
+  loop_mid="${loop_raw#*|}"
+  rec_lines="$(recorder_lines)"
+
+  # recorder_processes array
+  local rec_json="[]"
+  if [[ -n "$rec_lines" ]]; then
+    rec_json="["
+    local first=1
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      [[ $first -eq 0 ]] && rec_json+=","
+      first=0
+      rec_json+="\"$(json_escape "$line")\""
+    done <<< "$rec_lines"
+    rec_json+="]"
+  fi
+
+  # streams routed array
+  local streams_json="[]"
+  local stream_lines
+  stream_lines="$(streams_routed_to_rec || true)"
+  if [[ -n "$stream_lines" ]]; then
+    streams_json="["
+    local first=1
+    while IFS=$'\t' read -r sid app bin media; do
+      [[ -z "$sid" ]] && continue
+      [[ $first -eq 0 ]] && streams_json+=","
+      first=0
+      streams_json+="{\"id\":$sid,\"app\":\"$(json_escape "${app:-}")\",\"bin\":\"$(json_escape "${bin:-}")\",\"media\":\"$(json_escape "${media:-}")\"}"
+    done <<< "$stream_lines"
+    streams_json+="]"
+  fi
+
+  # moved_streams array
+  local moved_json="[]"
+  local map_lines
+  map_lines="$(moved_streams_map || true)"
+  if [[ -n "$map_lines" ]]; then
+    moved_json="["
+    local first=1
+    while IFS=$'\t' read -r sid orig; do
+      [[ -z "$sid" ]] && continue
+      [[ $first -eq 0 ]] && moved_json+=","
+      first=0
+      moved_json+="{\"id\":$sid,\"orig_sink\":$orig}"
+    done <<< "$map_lines"
+    moved_json+="]"
+  fi
+
+  # recorder.status (key/value) -> object
+  local state="unknown" artist="" title="" file="" started_at="" spotify_url=""
+  local last_result="" last_duration="" last_file="" last_spotify_url=""
+  if [[ -f "$STATUS_FILE" ]]; then
+    while IFS='=' read -r k v; do
+      case "$k" in
+        STATE) state="$v" ;;
+        ARTIST) artist="$v" ;;
+        TITLE) title="$v" ;;
+        FILE) file="$v" ;;
+        STARTED_AT) started_at="$v" ;;
+        SPOTIFY_URL) spotify_url="$v" ;;
+        LAST_RESULT) last_result="$v" ;;
+        LAST_DURATION) last_duration="$v" ;;
+        LAST_FILE) last_file="$v" ;;
+        LAST_SPOTIFY_URL) last_spotify_url="$v" ;;
+      esac
+    done < "$STATUS_FILE"
+  fi
+
+  printf '{'
+  printf '"server":"%s",' "$(json_escape "${server:-unknown}")"
+  printf '"default_sink":"%s",' "$(json_escape "${def_sink:-}")"
+  printf '"default_source":"%s",' "$(json_escape "${def_src:-}")"
+  printf '"rec_present":%s,' "$rp"
+  printf '"rec_monitor_present":%s,' "$rmp"
+  printf '"loopback_on":%s,' "$loop_on"
+  printf '"loopback_module_id":"%s",' "$(json_escape "${loop_mid:-}")"
+  printf '"recorder_running":%s,' "$( [[ -n "$rec_lines" ]] && echo 1 || echo 0 )"
+  printf '"recorder_processes":%s,' "$rec_json"
+  printf '"rec_sink_id":"%s",' "$(json_escape "${rec_id:-}")"
+  printf '"streams_routed_to_rec":%s,' "$streams_json"
+  printf '"rec_run_state_present":%s,' "$( [[ -d "$STATE_DIR" ]] && echo 1 || echo 0 )"
+  printf '"moved_streams_map_present":%s,' "$( [[ -f "$MAP_FILE" ]] && echo 1 || echo 0 )"
+  printf '"moved_streams":%s,' "$moved_json"
+  printf '"recorder_state":{"state":"%s","artist":"%s","title":"%s","file":"%s","started_at":"%s","spotify_url":"%s","last_result":"%s","last_duration":"%s","last_file":"%s","last_spotify_url":"%s"}' \
+    "$(json_escape "$state")" \
+    "$(json_escape "$artist")" \
+    "$(json_escape "$title")" \
+    "$(json_escape "$file")" \
+    "$(json_escape "$started_at")" \
+    "$(json_escape "$spotify_url")" \
+    "$(json_escape "$last_result")" \
+    "$(json_escape "$last_duration")" \
+    "$(json_escape "$last_file")" \
+    "$(json_escape "$last_spotify_url")"
+  printf '}\n'
+}
+
+run_once() {
+  if [[ "$JSON" -eq 1 ]]; then
+    render_json
+  else
+    render_human
+  fi
+}
+
+if [[ "$WATCH" -eq 1 ]]; then
+  while true; do
+    printf '\033c'
+    run_once
+    sleep "$INTERVAL"
+  done
+else
+  run_once
+fi
