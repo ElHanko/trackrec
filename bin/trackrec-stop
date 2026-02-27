@@ -8,7 +8,7 @@ pkill -INT -f 'mpris_flac_recorder\.py' 2>/dev/null || true
 command -v listen-off >/dev/null 2>&1 && listen-off >/dev/null 2>&1 || true
 
 # Try rollback if state exists
-STATE_DIR="/run/user/$(id -u)/rec-run"
+STATE_DIR="/run/user/$(id -u)/trackrec-run"
 MAP_FILE="$STATE_DIR/moved-streams.tsv"
 
 if [[ -s "$MAP_FILE" ]]; then

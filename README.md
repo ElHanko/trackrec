@@ -37,7 +37,7 @@ sudo apt install ffmpeg python3-dbus python3-gi
 Clone the repository and install user-local symlinks:
 
 ```bash
-cd $HOME/DJ/trackrec
+cd $HOME/trackrec
 ./install.sh
 source ~/.profile
 ```

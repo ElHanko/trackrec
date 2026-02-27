@@ -69,7 +69,7 @@ class Recorder:
         if self.dedupe:
             self._load_index()
 
-        # --- status export for rec-status (SSH-friendly) ---
+        # --- status export for trackrec-status (SSH-friendly) ---
         self.state_dir = f"/run/user/{os.getuid()}/trackrec-run"
         self.status_file = os.path.join(self.state_dir, "recorder.status")
         os.makedirs(self.state_dir, exist_ok=True)
@@ -312,7 +312,7 @@ class Recorder:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="MPRIS (PlaybackStatus+Metadata) -> split FLAC recorder with tags, no timestamp filenames, dedupe by SPOTIFY_URL, and status export for rec-status."
+        description="MPRIS (PlaybackStatus+Metadata) -> split FLAC recorder with tags, no timestamp filenames, dedupe by SPOTIFY_URL, and status export for trackrec-status."
     )
     ap.add_argument("--out", default="./recordings", help="Output directory")
     ap.add_argument("--source", required=True, help="Pulse/PipeWire source, e.g. rec.monitor")

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# rec-status [--json] [--watch [SECONDS]]
+# trackrec-status [--json] [--watch [SECONDS]]
 JSON=0
 WATCH=0
 INTERVAL=1
@@ -133,7 +133,7 @@ render_human() {
   loop_mid="${loop_raw#*|}"
   rec_lines="$(recorder_lines)"
 
-  echo "== rec-status =="
+  echo "== trackrec-status =="
   echo
   echo "-- PipeWire/Pulse --"
   echo "Server:  ${server:-unknown}"
@@ -199,7 +199,7 @@ render_human() {
   fi
 
   echo
-  echo "-- rec-run state --"
+  echo "-- trackrec-run state --"
   [[ -d "$STATE_DIR" ]] && echo "state dir: PRESENT ($STATE_DIR)" || echo "state dir: not present"
   if [[ -f "$MAP_FILE" ]]; then
     echo "moved-streams map:"
