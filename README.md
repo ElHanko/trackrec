@@ -2,35 +2,52 @@
 
 Application-specific track recording via **PipeWire** and **MPRIS**.
 
-`trackrec` records audio that is already being played locally, routes it through a dedicated PipeWire sink, and splits recordings per track using MPRIS playback events. It is a **CLI-first**, transparent toolchain with no background services and no platform-specific APIs.
-
-Recording and post-processing are intentionally separated: trackrec records locally; enrichment is optional and offline.
+`trackrec` records audio that is already being played locally, routes it through a dedicated PipeWire sink, and splits recordings cleanly per track using MPRIS playback events. It is a **CLI-first**, transparent toolchain with no background services and no platform-specific APIs.
 
 ---
 
 ## Features
 
-- Dedicated recording sink (`rec`) – no desktop/system sounds in captures
-- Optional loopback for monitoring (listen on/off)
-- Track-accurate start/stop via MPRIS (`PlaybackStatus` + `Metadata`)
-- Lossless FLAC output with tags (artist, title, album, track/disc numbers, source URL if available)
-- Minimum-duration filter to drop junk clips
-- Duplicate protection based on track URL
-- Clean setup and teardown (no leftovers)
-- Status inspection via CLI (also works over SSH)
+* Dedicated recording sink (`rec`) – no desktop/system sounds in captures
+* Optional loopback for monitoring (listen on/off)
+* Track-accurate start/stop via MPRIS (`PlaybackStatus` + `Metadata`)
+* Lossless FLAC output with tags (artist, title, album, track/disc numbers, source URL if available)
+* Minimum-duration filter to drop junk clips
+* Duplicate protection based on track URL
+* Clean setup and teardown (no leftovers)
+* Status inspection via CLI (also works over SSH)
 
 ---
 
 ## Requirements
 
-- Linux with **PipeWire** (and `pipewire-pulse`)
-- `ffmpeg`
-- Python ≥ 3.10
-- Python packages: `python3-dbus`, `python3-gi`
+* Linux with **PipeWire** (and `pipewire-pulse`)
+* `ffmpeg` (with FLAC support)
+* Python ≥ 3.10
+* Python packages: `python3-dbus`, `python3-gi`
 
 ```bash
 sudo apt install ffmpeg python3-dbus python3-gi
 ````
+
+### Optional: metadata enrichment
+
+Metadata enrichment is **not part of the recording pipeline** and is **disabled by default**.
+
+If you want to use it:
+
+* Install dependency:
+
+  ```bash
+  sudo apt install python3-mutagen
+  ```
+* Create Spotify Developer credentials (client credentials flow)
+* Provide credentials via `~/.config/trackrec/.env`
+* Run enrichment manually:
+
+  ```bash
+  trackrec-enrich <recordings-dir> --write
+  ```
 
 ---
 
@@ -44,19 +61,36 @@ cd $HOME/trackrec
 source ~/.profile
 ```
 
-All commands are installed to `~/.local/bin`.
+This installs **core recording tools only**.
+
+### Optional: install enrichment tools
+
+```bash
+./install.sh --with-enrich
+```
+
+This additionally installs:
+
+* `trackrec-enrich`
+* `spotify_apply_tags.py`
+
+and creates a template at:
+
+```
+~/.config/trackrec/.env
+```
 
 ---
 
 ## Usage
 
-Start playback in any MPRIS-capable player, then:
+Start playback in any MPRIS-capable player (e.g. a desktop media player), then:
 
 ```bash
 trackrec-run <pattern>
 ```
 
-`<pattern>` matches the application stream name (case-insensitive).
+* `<pattern>` matches the application stream name (case-insensitive)
 
 Optional monitoring:
 
@@ -88,42 +122,6 @@ trackrec-status --json
 
 ---
 
-## Optional: metadata enrichment
-
-After recording, you can optionally enrich files using `trackrec-enrich`. This is a separate batch step and not part of the real-time recording path.
-
-### Install dependency
-
-```bash
-sudo apt install python3-mutagen
-```
-
-### Credentials via .env (recommended)
-
-Create a local `.env` file (do not commit it):
-
-```env
-SPOTIFY_CLIENT_ID=your_client_id
-SPOTIFY_CLIENT_SECRET=your_client_secret
-```
-
-`trackrec-enrich` loads `.env` automatically from:
-
-* project directory (`./.env`)
-* or `~/.config/trackrec/.env`
-
-### Run
-
-```bash
-# Dry-run (no writes)
-trackrec-enrich recordings/
-
-# Write tags
-trackrec-enrich recordings/ --write --set-year
-```
-
----
-
 ## Audio Notes
 
 * Recording is taken from the local PipeWire graph
@@ -141,5 +139,3 @@ This tool records **local audio output**. Users are responsible for complying wi
 ## License
 
 MIT
-
-````
