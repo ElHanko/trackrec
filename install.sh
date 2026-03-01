@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+WITH_ENRICH=0
+for a in "${@:-}"; do
+  case "$a" in
+    --with-enrich) WITH_ENRICH=1;;
+    -h|--help)
+      cat <<'USAGE'
+Usage:
+  ./install.sh [--with-enrich]
+
+Installs core trackrec tools into ~/.local/bin and sets up defaults.
+
+Optional:
+  --with-enrich   also installs optional enrichment tools (trackrec-enrich + spotify_apply_tags.py)
+                  and creates ~/.config/trackrec/.env template.
+                  Requires Spotify Developer credentials + python3-mutagen.
+USAGE
+      exit 0
+      ;;
+  esac
+done
+
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BIN_SRC="$PROJECT_DIR/bin"
 BIN_DST="$HOME/.local/bin"
@@ -10,21 +31,47 @@ CFG_DIR="$HOME/.config/trackrec"
 CFG_FILE="$CFG_DIR/trackrec.conf"
 ENV_FILE="$CFG_DIR/.env"
 
-if [[ ! -d "$BIN_SRC" ]]; then
-  echo "ERROR: missing $BIN_SRC" >&2
-  exit 1
-fi
+[[ -d "$BIN_SRC" ]] || { echo "ERROR: missing $BIN_SRC" >&2; exit 1; }
 
 mkdir -p "$BIN_DST"
 
+# Core tools (always installed)
+CORE_TOOLS=(
+  mpris_flac_recorder.py
+  trackrec-listen-off
+  trackrec-listen-on
+  trackrec-route
+  trackrec-run
+  trackrec-setup
+  trackrec-status
+  trackrec-stop
+)
+
+# Optional tools (installed only with --with-enrich)
+ENRICH_TOOLS=(
+  trackrec-enrich
+  spotify_apply_tags.py
+)
+
 echo "Linking tools into $BIN_DST ..."
-for f in "$BIN_SRC"/*; do
-  [[ -f "$f" ]] || continue
-  name="$(basename "$f")"
-  ln -sf "$f" "$BIN_DST/$name"
-  chmod +x "$f" || true
+
+for name in "${CORE_TOOLS[@]}"; do
+  src="$BIN_SRC/$name"
+  [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
+  ln -sf "$src" "$BIN_DST/$name"
+  chmod +x "$src" || true
   echo "  -> $name"
 done
+
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
+  for name in "${ENRICH_TOOLS[@]}"; do
+    src="$BIN_SRC/$name"
+    [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
+    ln -sf "$src" "$BIN_DST/$name"
+    chmod +x "$src" || true
+    echo "  -> $name"
+  done
+fi
 
 # Ensure ~/.local/bin is in PATH for login shells (SSH login shells load ~/.profile)
 if ! grep -q 'HOME/.local/bin' "$PROFILE" 2>/dev/null; then
@@ -45,11 +92,6 @@ fi
 
 mkdir -p "$CFG_DIR"
 chmod 700 "$CFG_DIR" || true
-
-is_yes() {
-  local a="${1:-}"
-  case "${a,,}" in y|yes|j|ja) return 0;; *) return 1;; esac
-}
 
 echo
 echo "Config directory: $CFG_DIR"
@@ -77,47 +119,53 @@ else
   echo "Defaults exist: $CFG_FILE"
 fi
 
-# --- .env for enrichment (Spotify credentials) ---
-if [[ ! -f "$ENV_FILE" ]]; then
-  cat > "$ENV_FILE" <<'ENV'
+# ensure default recordings dir exists (trackrec-run will also mkdir -p OUTDIR)
+mkdir -p "$HOME/recordings" || true
+
+# --- Optional enrichment support (.env template) ---
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
+  if [[ ! -f "$ENV_FILE" ]]; then
+    cat > "$ENV_FILE" <<'ENV'
 # trackrec-enrich credentials (optional)
-# Fill these if you want to use trackrec-enrich with Spotify Web API.
+# Requires Spotify Developer credentials (client credentials flow).
+# Create an app in your Spotify Developer dashboard and paste the values below.
 # Keep this file private (chmod 600). Do NOT commit it.
 
 SPOTIFY_CLIENT_ID=
 SPOTIFY_CLIENT_SECRET=
 ENV
-  chmod 600 "$ENV_FILE" || true
-  echo "Created template: $ENV_FILE"
-else
-  echo "Env file exists: $ENV_FILE"
-fi
-
-# Ask only if .env looks unconfigured (empty values)
-needs_env_fill=0
-if [[ -f "$ENV_FILE" ]]; then
-  if grep -qE '^SPOTIFY_CLIENT_ID=$' "$ENV_FILE" && grep -qE '^SPOTIFY_CLIENT_SECRET=$' "$ENV_FILE"; then
-    needs_env_fill=1
-  fi
-fi
-
-if [[ "$needs_env_fill" -eq 1 ]]; then
-  echo
-  echo "Optional: fill $ENV_FILE now?"
-  read -r -p "Enter SPOTIFY_CLIENT_ID/SECRET interactively? [y/N]: " ans || true
-  if is_yes "${ans:-}"; then
-    read -r -p "SPOTIFY_CLIENT_ID: " CID || true
-    read -r -p "SPOTIFY_CLIENT_SECRET: " CSEC || true
-
-    perl -i -pe 's/^SPOTIFY_CLIENT_ID=.*/SPOTIFY_CLIENT_ID='"${CID//\//\\/}"'/ if /^SPOTIFY_CLIENT_ID=/' "$ENV_FILE"
-    perl -i -pe 's/^SPOTIFY_CLIENT_SECRET=.*/SPOTIFY_CLIENT_SECRET='"${CSEC//\//\\/}"'/ if /^SPOTIFY_CLIENT_SECRET=/' "$ENV_FILE"
     chmod 600 "$ENV_FILE" || true
-    echo "Updated: $ENV_FILE"
+    echo "Created enrichment .env template: $ENV_FILE"
+  else
+    echo "Enrichment .env exists: $ENV_FILE"
   fi
-fi
 
-# ensure default recordings dir exists (trackrec-run will also mkdir -p OUTDIR)
-mkdir -p "$HOME/recordings" || true
+  cat <<'NOTE'
+
+Enrichment is OPTIONAL and not part of the recording pipeline.
+
+To use:
+  1) Install dependency:
+       sudo apt install python3-mutagen
+  2) Create Spotify Developer credentials (client id/secret)
+  3) Fill:
+       ~/.config/trackrec/.env
+  4) Run:
+       trackrec-enrich <recordings-dir> --write
+
+NOTE
+else
+  cat <<'NOTE'
+
+Optional enrichment (not installed by default):
+  ./install.sh --with-enrich
+
+Requires:
+  - sudo apt install python3-mutagen
+  - Spotify Developer credentials (client id/secret)
+
+NOTE
+fi
 
 echo
 echo "Done."
@@ -127,6 +175,3 @@ echo "  trackrec-run spotify"
 echo
 echo "Edit defaults here:"
 echo "  $CFG_FILE"
-echo
-echo "Optional (for enrichment) fill credentials here:"
-echo "  $ENV_FILE"
