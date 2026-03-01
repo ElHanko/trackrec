@@ -11,7 +11,7 @@ fi
 
 # Defaults
 PLAYER="$pattern"
-OUTDIR="$HOME/recordings"
+OUTDIR="$HOME/DJ/recordings"
 MIN_SECONDS=30
 COMP=5
 LISTEN=0
