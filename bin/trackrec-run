@@ -9,17 +9,24 @@ if [[ -z "$pattern" ]]; then
   exit 1
 fi
 
-# Defaults
+# Load defaults from config (optional)
+CFG_FILE="$HOME/.config/trackrec/trackrec.conf"
+if [[ -f "$CFG_FILE" ]]; then
+  # shellcheck disable=SC1090
+  source "$CFG_FILE"
+fi
+
+# Defaults (can be overridden by config; CLI flags still override)
 PLAYER="$pattern"
-OUTDIR="$HOME/DJ/recordings"
-MIN_SECONDS=30
-COMP=5
-LISTEN=0
+OUTDIR="${TRACKREC_OUTDIR:-$HOME/recordings}"
+MIN_SECONDS="${TRACKREC_MIN_SECONDS:-30}"
+COMP="${TRACKREC_COMP:-5}"
+LISTEN="${TRACKREC_LISTEN:-0}"
 
-FOLLOW=1
-FOLLOW_INTERVAL=1
+FOLLOW="${TRACKREC_FOLLOW:-1}"
+FOLLOW_INTERVAL="${TRACKREC_FOLLOW_INTERVAL:-1}"
 
-DEDUPE=1   # <-- default ON
+DEDUPE="${TRACKREC_DEDUPE:-1}"   # default ON
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
