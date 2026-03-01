@@ -9,14 +9,24 @@ if [[ -z "$pattern" ]]; then
   exit 1
 fi
 
-# Load defaults from config (optional)
+# ---- Load defaults from config (optional) ----
 CFG_FILE="$HOME/.config/trackrec/trackrec.conf"
 if [[ -f "$CFG_FILE" ]]; then
+  # Only accept TRACKREC_* assignments to reduce foot-guns.
   # shellcheck disable=SC1090
-  source "$CFG_FILE"
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # strip leading/trailing whitespace
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    if [[ "$line" =~ ^TRACKREC_[A-Z0-9_]+= ]]; then
+      eval "$line"
+    fi
+  done < "$CFG_FILE"
 fi
 
-# Defaults (can be overridden by config; CLI flags still override)
+# ---- Defaults (config provides defaults; CLI flags override) ----
 PLAYER="$pattern"
 OUTDIR="${TRACKREC_OUTDIR:-$HOME/recordings}"
 MIN_SECONDS="${TRACKREC_MIN_SECONDS:-30}"
@@ -36,7 +46,7 @@ while [[ $# -gt 0 ]]; do
     --comp) COMP="${2:-$COMP}"; shift 2;;
     --listen) LISTEN=1; shift;;
     --no-follow) FOLLOW=0; shift;;
-    --follow-interval) FOLLOW_INTERVAL="${2:-1}"; shift 2;;
+    --follow-interval) FOLLOW_INTERVAL="${2:-$FOLLOW_INTERVAL}"; shift 2;;
     --no-dedupe) DEDUPE=0; shift;;
     *) echo "Unknown option: $1"; exit 2;;
   esac
@@ -102,11 +112,20 @@ match_and_move_new_streams() {
   done
 }
 
+# Initial routing: require at least one match; otherwise recording makes no sense.
 match_and_move_new_streams
 if ! pactl list short sink-inputs | awk '{print $1}' | while read -r id; do grep -q "^$id\t" "$MAP_FILE" && exit 0; done; then
   echo "No matching audio streams for '$pattern'. Start playback first."
   exit 4
 fi
+
+if [[ -z "$OUTDIR" ]]; then
+  echo "ERROR: OUTDIR resolved to empty string"
+  exit 5
+fi
+
+# Ensure output dir exists early (fail fast)
+mkdir -p "$OUTDIR"
 
 if [[ "$LISTEN" -eq 1 ]]; then
   trackrec-listen-on
