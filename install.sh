@@ -11,7 +11,7 @@ CFG_FILE="$CFG_DIR/trackrec.conf"
 ENV_FILE="$CFG_DIR/.env"
 
 if [[ ! -d "$BIN_SRC" ]]; then
-  echo "ERROR: missing $BIN_SRC"
+  echo "ERROR: missing $BIN_SRC" >&2
   exit 1
 fi
 
@@ -26,7 +26,7 @@ for f in "$BIN_SRC"/*; do
   echo "  -> $name"
 done
 
-# Ensure ~/.local/bin is in PATH for login shells (SSH!)
+# Ensure ~/.local/bin is in PATH for login shells (SSH login shells load ~/.profile)
 if ! grep -q 'HOME/.local/bin' "$PROFILE" 2>/dev/null; then
   echo "Updating $PROFILE to include ~/.local/bin in PATH ..."
   cat >> "$PROFILE" <<'EOP'
@@ -51,99 +51,82 @@ is_yes() {
   case "${a,,}" in y|yes|j|ja) return 0;; *) return 1;; esac
 }
 
-prompt() {
-  local var="$1" default="$2" text="$3"
-  local val
-  read -r -p "$text [$default]: " val || true
-  val="${val:-$default}"
-  printf -v "$var" '%s' "$val"
-}
-
 echo
 echo "Config directory: $CFG_DIR"
 
 # --- trackrec.conf (defaults for trackrec-run) ---
 if [[ ! -f "$CFG_FILE" ]]; then
-  echo "No config found: $CFG_FILE"
-  echo "Create defaults now? (recommended)"
-  read -r -p "Create $CFG_FILE? [Y/n]: " ans || true
-  if ! [[ "${ans:-Y}" =~ ^([Nn]|no|NO)$ ]]; then
-    # sensible defaults (you asked for these)
-    DEF_OUTDIR="$HOME/recordings"
-    DEF_MIN_SECONDS="30"
-    DEF_COMP="5"
-    DEF_LISTEN="0"
-    DEF_FOLLOW="1"
-    DEF_FOLLOW_INTERVAL="1"
-    DEF_DEDUPE="1"
+  cat > "$CFG_FILE" <<'CFG'
+# trackrec defaults (loaded by trackrec-run)
+# CLI flags always override these values.
 
-    echo
-    echo "Configure trackrec-run defaults (you can edit later: $CFG_FILE)"
-    prompt OUTDIR "$DEF_OUTDIR" "Default output directory"
-    prompt MIN_SECONDS "$DEF_MIN_SECONDS" "Drop recordings shorter than (seconds)"
-    prompt COMP "$DEF_COMP" "FLAC compression level (0-8)"
-    prompt LISTEN "$DEF_LISTEN" "Default listen mode (0=off, 1=on)"
-    prompt FOLLOW "$DEF_FOLLOW" "Auto-follow new streams (0=off, 1=on)"
-    prompt FOLLOW_INTERVAL "$DEF_FOLLOW_INTERVAL" "Follow interval (seconds)"
-    prompt DEDUPE "$DEF_DEDUPE" "Dedupe by SPOTIFY_URL (0=off, 1=on)"
+TRACKREC_OUTDIR="$HOME/recordings"
+TRACKREC_MIN_SECONDS="30"
+TRACKREC_COMP="5"
+TRACKREC_LISTEN="0"
 
-    cat > "$CFG_FILE" <<CFG
-# trackrec configuration
-# Loaded by trackrec-run (and only affects defaults; CLI flags still override)
-
-TRACKREC_OUTDIR="$OUTDIR"
-TRACKREC_MIN_SECONDS="$MIN_SECONDS"
-TRACKREC_COMP="$COMP"
-TRACKREC_LISTEN="$LISTEN"
-
-TRACKREC_FOLLOW="$FOLLOW"
-TRACKREC_FOLLOW_INTERVAL="$FOLLOW_INTERVAL"
+TRACKREC_FOLLOW="1"
+TRACKREC_FOLLOW_INTERVAL="1"
 
 # default ON (recommended)
-TRACKREC_DEDUPE="$DEDUPE"
+TRACKREC_DEDUPE="1"
 CFG
-
-    chmod 600 "$CFG_FILE" || true
-    echo "Wrote: $CFG_FILE"
-  else
-    echo "Skipped config creation."
-  fi
+  chmod 600 "$CFG_FILE" || true
+  echo "Created defaults: $CFG_FILE"
 else
-  echo "Config exists: $CFG_FILE"
+  echo "Defaults exist: $CFG_FILE"
 fi
 
 # --- .env for enrichment (Spotify credentials) ---
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo
-  echo "Optional: create $ENV_FILE for trackrec-enrich (Spotify API credentials)."
-  read -r -p "Create $ENV_FILE now? [y/N]: " ans || true
-  if is_yes "${ans:-}"; then
-    read -r -p "SPOTIFY_CLIENT_ID: " CID || true
-    read -r -p "SPOTIFY_CLIENT_SECRET: " CSEC || true
+  cat > "$ENV_FILE" <<'ENV'
+# trackrec-enrich credentials (optional)
+# Fill these if you want to use trackrec-enrich with Spotify Web API.
+# Keep this file private (chmod 600). Do NOT commit it.
 
-    cat > "$ENV_FILE" <<ENV
-# trackrec enrichment credentials (do not commit)
-SPOTIFY_CLIENT_ID=${CID:-}
-SPOTIFY_CLIENT_SECRET=${CSEC:-}
+SPOTIFY_CLIENT_ID=
+SPOTIFY_CLIENT_SECRET=
 ENV
-    chmod 600 "$ENV_FILE" || true
-    echo "Wrote: $ENV_FILE (chmod 600)"
-  else
-    echo "Skipped .env creation."
-  fi
+  chmod 600 "$ENV_FILE" || true
+  echo "Created template: $ENV_FILE"
 else
   echo "Env file exists: $ENV_FILE"
 fi
 
-# default recordings dir (legacy fallback)
-mkdir -p "$HOME/recordings"
+# Ask only if .env looks unconfigured (empty values)
+needs_env_fill=0
+if [[ -f "$ENV_FILE" ]]; then
+  if grep -qE '^SPOTIFY_CLIENT_ID=$' "$ENV_FILE" && grep -qE '^SPOTIFY_CLIENT_SECRET=$' "$ENV_FILE"; then
+    needs_env_fill=1
+  fi
+fi
+
+if [[ "$needs_env_fill" -eq 1 ]]; then
+  echo
+  echo "Optional: fill $ENV_FILE now?"
+  read -r -p "Enter SPOTIFY_CLIENT_ID/SECRET interactively? [y/N]: " ans || true
+  if is_yes "${ans:-}"; then
+    read -r -p "SPOTIFY_CLIENT_ID: " CID || true
+    read -r -p "SPOTIFY_CLIENT_SECRET: " CSEC || true
+
+    perl -i -pe 's/^SPOTIFY_CLIENT_ID=.*/SPOTIFY_CLIENT_ID='"${CID//\//\\/}"'/ if /^SPOTIFY_CLIENT_ID=/' "$ENV_FILE"
+    perl -i -pe 's/^SPOTIFY_CLIENT_SECRET=.*/SPOTIFY_CLIENT_SECRET='"${CSEC//\//\\/}"'/ if /^SPOTIFY_CLIENT_SECRET=/' "$ENV_FILE"
+    chmod 600 "$ENV_FILE" || true
+    echo "Updated: $ENV_FILE"
+  fi
+fi
+
+# ensure default recordings dir exists (trackrec-run will also mkdir -p OUTDIR)
+mkdir -p "$HOME/recordings" || true
 
 echo
 echo "Done."
-echo "Open a new shell (or run: source ~/.profile) then test:"
+echo "Open a new login shell (or run: source ~/.profile) then test:"
 echo "  trackrec-status"
 echo "  trackrec-run spotify"
 echo
-echo "Config:"
+echo "Edit defaults here:"
 echo "  $CFG_FILE"
-echo "  $ENV_FILE (optional, for enrichment)"
+echo
+echo "Optional (for enrichment) fill credentials here:"
+echo "  $ENV_FILE"
