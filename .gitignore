@@ -18,3 +18,5 @@ recordings/
 # temp / backups
 *~
 *.swp
+.env
+.env.*

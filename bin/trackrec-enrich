@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Load .env if present (project-local or HOME)
+load_env() {
+  local f
+  for f in ".env" "$HOME/DJ/trackrec/.env"; do
+    if [[ -f "$f" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$f"
+      set +a
+      break
+    fi
+  done
+}
+
+load_env
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  trackrec-enrich <path...> [options]
+
+Examples:
+  trackrec-enrich "$HOME/recordings" --write
+  trackrec-enrich "$HOME/recordings" --write --set-year
+  trackrec-enrich "$HOME/recordings/Artist - Track.flac" --write --force
+
+Notes:
+- Reads SPOTIFY_URL from files and enriches tags via Spotify Web API.
+- Needs SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET (env) unless passed via flags.
+- Batch mode: token is fetched once and reused.
+
+Options are forwarded to the tagger:
+  --spotify-client-id <id>
+  --spotify-client-secret <secret>
+  --write
+  --force
+  --set-year
+  --set-genre
+  --dump
+  --quiet
+USAGE
+}
+
+need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing command: $1" >&2; exit 3; }; }
+
+need_cmd python3
+
+TAGGER="$(command -v spotify_apply_tags.py || true)"
+if [[ -z "$TAGGER" ]]; then
+  # try repo-local path (installed via install.sh links everything in bin/)
+  if [[ -x "$(dirname "$0")/spotify_apply_tags.py" ]]; then
+    TAGGER="$(dirname "$0")/spotify_apply_tags.py"
+  else
+    echo "Missing command: spotify_apply_tags.py (expected in PATH or alongside this script)" >&2
+    exit 3
+  fi
+fi
+
+if [[ $# -lt 1 ]]; then
+  usage
+  exit 1
+fi
+
+# collect files from positional args (files/dirs), forward rest of flags
+paths=()
+forward=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage; exit 0;;
+    --*) forward+=("$1"); shift; if [[ $# -gt 0 && "${forward[-1]}" =~ ^--spotify-client-(id|secret)$ ]]; then forward+=("${1:-}"); shift; fi;;
+    *) paths+=("$1"); shift;;
+  esac
+done
+
+files=()
+
+add_file() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  case "${f,,}" in
+    *.flac|*.mp3|*.ogg|*.opus|*.m4a) files+=("$f");;
+  esac
+}
+
+# expand paths
+for p in "${paths[@]}"; do
+  if [[ -d "$p" ]]; then
+    while IFS= read -r -d '' f; do
+      add_file "$f"
+    done < <(find "$p" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' -o -iname '*.opus' -o -iname '*.m4a' \) -print0)
+  else
+    add_file "$p"
+  fi
+done
+
+if [[ ${#files[@]} -eq 0 ]]; then
+  echo "No supported audio files found in given path(s)." >&2
+  exit 2
+fi
+
+exec python3 "$TAGGER" "${files[@]}" "${forward[@]}"
