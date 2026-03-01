@@ -2,7 +2,7 @@
 # Load .env if present (project-local or HOME)
 load_env() {
   local f
-  for f in ".env" "$HOME/DJ/trackrec/.env"; do
+  for f in ".env" "$HOME/.config/trackrec/.env"; do
     if [[ -f "$f" ]]; then
       set -a
       # shellcheck disable=SC1090
