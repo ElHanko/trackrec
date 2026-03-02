@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sys
+import time
+from urllib.error import HTTPError, URLError
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
@@ -18,10 +20,77 @@ def eprint(*a, **kw):
     print(*a, file=sys.stderr, **kw)
 
 
-def http_json(req: Request) -> Dict[str, Any]:
-    with urlopen(req, timeout=30) as r:
-        data = r.read()
-    return json.loads(data.decode("utf-8", "replace"))
+def http_json(
+    req: Request,
+    *,
+    max_retries: int = 6,
+    base_backoff: float = 1.0,
+    max_backoff: float = 60.0,
+    default_sleep: float = 0.15,
+) -> Dict[str, Any]:
+    """
+    HTTP JSON with basic rate-limit handling.
+    - On 429: obey Retry-After if present, else exponential backoff.
+    - On transient network errors: retry with backoff.
+    """
+    attempt = 0
+    backoff = base_backoff
+
+    while True:
+        try:
+            with urlopen(req, timeout=30) as r:
+                # tiny pacing helps a lot with 429 on big batches
+                if default_sleep > 0:
+                    time.sleep(default_sleep)
+                data = r.read()
+            return json.loads(data.decode("utf-8", "replace"))
+
+        except HTTPError as e:
+            # Try to extract body for better errors (Spotify often returns JSON)
+            body = ""
+            try:
+                body = e.read().decode("utf-8", "replace")
+            except Exception:
+                body = ""
+
+            # Rate limited
+            if e.code == 429:
+                ra = e.headers.get("Retry-After")
+                if ra:
+                    try:
+                        wait = float(ra)
+                    except Exception:
+                        wait = backoff
+                else:
+                    wait = backoff
+
+                attempt += 1
+                if attempt > max_retries:
+                    # include a hint; body may contain Spotify error msg
+                    raise RuntimeError(f"HTTP 429 Too Many Requests (retries exceeded). body={body[:200]}")
+
+                wait = min(max_backoff, max(0.5, wait))
+                eprint(f"[rate-limit] 429 Too Many Requests. sleeping {wait:.1f}s (attempt {attempt}/{max_retries})")
+                time.sleep(wait)
+                backoff = min(max_backoff, backoff * 2)
+                continue
+
+            # Unauthorized / forbidden: bubble up with context
+            if e.code in (401, 403):
+                raise RuntimeError(f"HTTP {e.code} auth error. body={body[:200]}")
+
+            # Other HTTP errors: no retry by default
+            raise RuntimeError(f"HTTP {e.code} error. body={body[:200]}")
+
+        except (URLError, TimeoutError) as e:
+            attempt += 1
+            if attempt > max_retries:
+                raise RuntimeError(f"Network error (retries exceeded): {e}")
+            wait = min(max_backoff, backoff)
+            eprint(f"[net] {e}. sleeping {wait:.1f}s (attempt {attempt}/{max_retries})")
+            time.sleep(wait)
+            backoff = min(max_backoff, backoff * 2)
+            continue
 
 
 def read_spotify_url(path: str) -> Optional[str]:
@@ -406,6 +475,8 @@ def main():
     ap.add_argument("--set-genre", action="store_true", help="Also set standard genre (artist genres; weak signal)")
     ap.add_argument("--dump", action="store_true", help="Print fetched Spotify data (JSON)")
     ap.add_argument("--quiet", action="store_true", help="Less output (good for big batches)")
+    ap.add_argument("--max-retries", type=int, default=6)
+    ap.add_argument("--sleep", type=float, default=0.15, help="Small pacing sleep between requests (seconds)")
     args = ap.parse_args()
 
     cid = args.spotify_client_id.strip()
