@@ -88,7 +88,7 @@ trackrec-setup
 pat_lc="$(echo "$pattern" | tr '[:upper:]' '[:lower:]')"
 
 match_and_move_new_streams() {
-  local ids id block orig_sink hay
+  local ids id block orig_sink app bin media hay
   ids="$(pactl list short sink-inputs | awk '{print $1}' || true)"
   [[ -z "$ids" ]] && return 0
 
@@ -101,11 +101,18 @@ match_and_move_new_streams() {
     orig_sink="$(echo "$block" | sed -n 's/^[[:space:]]*Sink: \([0-9]\+\).*/\1/p' | head -n1)"
     [[ -z "$orig_sink" ]] && { echo "$id" >> "$SEEN_FILE"; continue; }
 
-    hay="$(echo "$block" | sed -n 's/.*\(application.name\|application.process.binary\|media.name\) = "\(.*\)".*/\2/p' | tr '[:upper:]' '[:lower:]')"
+    app="$(echo "$block" | sed -n 's/^[[:space:]]*application\.name = "\(.*\)".*/\1/p' | head -n1)"
+    bin="$(echo "$block" | sed -n 's/^[[:space:]]*application\.process\.binary = "\(.*\)".*/\1/p' | head -n1)"
+    media="$(echo "$block" | sed -n 's/^[[:space:]]*media\.name = "\(.*\)".*/\1/p' | head -n1)"
 
-    if echo "$hay" | grep -q "$pat_lc"; then
-      printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
-      pactl move-sink-input "$id" rec
+    hay="$(printf "%s\n%s\n%s\n" "$app" "$bin" "$media" | tr '[:upper:]' '[:lower:]')"
+
+    if echo "$hay" | grep -qF "$pat_lc"; then
+      if pactl move-sink-input "$id" rec >/dev/null 2>&1; then
+        printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
+      else
+        echo "WARN: failed to move sink-input #$id to rec" >&2
+      fi
     fi
 
     echo "$id" >> "$SEEN_FILE"
@@ -114,7 +121,7 @@ match_and_move_new_streams() {
 
 # Initial routing: require at least one match; otherwise recording makes no sense.
 match_and_move_new_streams
-if ! pactl list short sink-inputs | awk '{print $1}' | while read -r id; do grep -q "^$id\t" "$MAP_FILE" && exit 0; done; then
+if [[ ! -s "$MAP_FILE" ]]; then
   echo "No matching audio streams for '$pattern'. Start playback first."
   exit 4
 fi
