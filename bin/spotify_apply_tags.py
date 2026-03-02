@@ -15,6 +15,8 @@ from mutagen import File as MFile
 
 SPOTIFY_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
 
+class SpotifyAuthError(RuntimeError):
+    pass
 
 def eprint(*a, **kw):
     print(*a, file=sys.stderr, **kw)
@@ -77,7 +79,7 @@ def http_json(
 
             # Unauthorized / forbidden: bubble up with context
             if e.code in (401, 403):
-                raise RuntimeError(f"HTTP {e.code} auth error. body={body[:200]}")
+                raise SpotifyAuthError(f"HTTP {e.code} auth error. body={body[:200]}")
 
             # Other HTTP errors: no retry by default
             raise RuntimeError(f"HTTP {e.code} error. body={body[:200]}")
@@ -485,7 +487,9 @@ def main():
         eprint("Missing Spotify credentials. Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET (env) or pass flags.")
         sys.exit(3)
 
-    token, _expires = spotify_get_token(cid, csec)
+    token, expires = spotify_get_token(cid, csec)
+    # refresh a bit early to avoid edge cases
+    token_expires_at = time.time() + max(0, int(expires) - 60)
 
     album_cache: Dict[str, Dict[str, Any]] = {}
     artist_cache: Dict[str, Dict[str, Any]] = {}
@@ -493,7 +497,15 @@ def main():
 
     ok = 0
     fail = 0
+
     for p in args.files:
+        # proactive refresh if token is near expiry
+        if time.time() >= token_expires_at:
+            if not args.quiet:
+                eprint("[auth] token expired/near expiry, refreshing ...")
+            token, expires = spotify_get_token(cid, csec)
+            token_expires_at = time.time() + max(0, int(expires) - 60)
+
         try:
             if enrich_one(
                 p,
@@ -511,6 +523,36 @@ def main():
                 ok += 1
             else:
                 fail += 1
+
+        except SpotifyAuthError as ex:
+            # one refresh + one retry for this file
+            eprint(f"[auth] {ex} ({p})")
+            eprint("[auth] refreshing token and retrying once ...")
+            try:
+                token, expires = spotify_get_token(cid, csec)
+                token_expires_at = time.time() + max(0, int(expires) - 60)
+
+                if enrich_one(
+                    p,
+                    token=token,
+                    force=args.force,
+                    write=args.write,
+                    set_year=args.set_year,
+                    set_genre=args.set_genre,
+                    dump=args.dump,
+                    quiet=args.quiet,
+                    album_cache=album_cache,
+                    artist_cache=artist_cache,
+                    af_cache=af_cache,
+                ):
+                    ok += 1
+                else:
+                    fail += 1
+
+            except Exception as ex2:
+                eprint(f"[err] {ex2} ({p})")
+                fail += 1
+
         except Exception as ex:
             eprint(f"[err] {ex} ({p})")
             fail += 1
