@@ -1,28 +1,18 @@
 #!/usr/bin/env bash
-# Load .env if present (project-local or HOME)
-load_env() {
-  local f
-  for f in ".env" "$HOME/.config/trackrec/.env"; do
-    if [[ -f "$f" ]]; then
-      set -a
-      # shellcheck disable=SC1090
-      source "$f"
-      set +a
-      break
-    fi
-  done
-}
-
-load_env
 set -euo pipefail
 
 usage() {
   cat <<'USAGE'
 Usage:
-  trackrec-enrich <path...> [options]
+  trackrec-enrich [<path...>] [options]
+
+If no <path> is given, trackrec-enrich uses TRACKREC_OUTDIR from:
+  ~/.config/trackrec/trackrec.conf
+Fallback:
+  $HOME/recordings
 
 Examples:
-  trackrec-enrich "$HOME/recordings" --write
+  trackrec-enrich --write
   trackrec-enrich "$HOME/recordings" --write --set-year
   trackrec-enrich "$HOME/recordings/Artist - Track.flac" --write --force
 
@@ -45,11 +35,42 @@ USAGE
 
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing command: $1" >&2; exit 3; }; }
 
+# Load .env if present (project-local or HOME)
+load_env() {
+  local f
+  for f in ".env" "$HOME/.config/trackrec/.env"; do
+    if [[ -f "$f" ]]; then
+      set -a
+      # shellcheck disable=SC1090
+      source "$f"
+      set +a
+      return 0
+    fi
+  done
+  return 0
+}
+
+# Load TRACKREC_* defaults from config (optional)
+load_trackrec_conf() {
+  local cfg="$HOME/.config/trackrec/trackrec.conf"
+  [[ -f "$cfg" ]] || return 0
+
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    if [[ "$line" =~ ^TRACKREC_[A-Z0-9_]+= ]]; then
+      eval "$line"
+    fi
+  done < "$cfg"
+}
+
 need_cmd python3
 
 TAGGER="$(command -v spotify_apply_tags.py || true)"
 if [[ -z "$TAGGER" ]]; then
-  # try repo-local path (installed via install.sh links everything in bin/)
   if [[ -x "$(dirname "$0")/spotify_apply_tags.py" ]]; then
     TAGGER="$(dirname "$0")/spotify_apply_tags.py"
   else
@@ -58,9 +79,19 @@ if [[ -z "$TAGGER" ]]; then
   fi
 fi
 
-if [[ $# -lt 1 ]]; then
-  usage
-  exit 1
+load_env
+load_trackrec_conf
+
+# Determine default recordings dir if no paths are given
+default_outdir="${TRACKREC_OUTDIR:-}"
+
+# expand ~ and $HOME
+default_outdir="${default_outdir/#\~/$HOME}"
+default_outdir="${default_outdir//\$HOME/$HOME}"
+
+# fallback only if config not set
+if [[ -z "$default_outdir" ]]; then
+  [[ -d "$HOME/recordings" ]] && default_outdir="$HOME/recordings"
 fi
 
 # collect files from positional args (files/dirs), forward rest of flags
@@ -70,10 +101,28 @@ forward=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0;;
-    --*) forward+=("$1"); shift; if [[ $# -gt 0 && "${forward[-1]}" =~ ^--spotify-client-(id|secret)$ ]]; then forward+=("${1:-}"); shift; fi;;
-    *) paths+=("$1"); shift;;
+    --*)
+      forward+=("$1"); shift
+      if [[ $# -gt 0 && "${forward[-1]}" =~ ^--spotify-client-(id|secret)$ ]]; then
+        forward+=("${1:-}"); shift
+      fi
+      ;;
+    *)
+      paths+=("$1"); shift
+      ;;
   esac
 done
+
+if [[ ${#paths[@]} -eq 0 ]]; then
+  if [[ -z "$default_outdir" || ! -d "$default_outdir" ]]; then
+    echo "ERROR: No input path given and no valid default found." >&2
+    echo "Either:" >&2
+    echo "  - pass a path to trackrec-enrich" >&2
+    echo "  - or set TRACKREC_OUTDIR in ~/.config/trackrec/trackrec.conf" >&2
+    exit 2
+  fi
+  paths+=("$default_outdir")
+fi
 
 files=()
 
@@ -97,7 +146,7 @@ for p in "${paths[@]}"; do
 done
 
 if [[ ${#files[@]} -eq 0 ]]; then
-  echo "No supported audio files found in given path(s)." >&2
+  echo "No supported audio files found in: ${paths[*]}" >&2
   exit 2
 fi
 
