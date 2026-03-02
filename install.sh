@@ -119,8 +119,18 @@ else
   echo "Defaults exist: $CFG_FILE"
 fi
 
-# ensure default recordings dir exists (trackrec-run will also mkdir -p OUTDIR)
-mkdir -p "$HOME/recordings" || true
+# Create output directory:
+# - if we just created defaults, use the default
+# - if defaults already exist, respect configured TRACKREC_OUTDIR (if present)
+if [[ ! -f "$CFG_FILE" ]]; then
+  mkdir -p "$HOME/recordings" || true
+else
+  # Extract TRACKREC_OUTDIR from config (supports $HOME and ~)
+  outdir="$(grep -E '^TRACKREC_OUTDIR=' "$CFG_FILE" | head -n1 | cut -d= -f2- | sed 's/^"//;s/"$//')"
+  outdir="${outdir/#\~/$HOME}"
+  outdir="${outdir//\$HOME/$HOME}"
+  [[ -n "$outdir" ]] && mkdir -p "$outdir" || true
+fi
 
 # --- Optional enrichment support (.env template) ---
 if [[ "$WITH_ENRICH" -eq 1 ]]; then
