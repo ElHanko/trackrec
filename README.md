@@ -13,7 +13,8 @@ Recording and post-processing are intentionally separated: trackrec records loca
 - Dedicated recording sink (`rec`) – no desktop/system sounds in captures
 - Optional loopback for monitoring (listen on/off)
 - Track-accurate start/stop via MPRIS (`PlaybackStatus` + `Metadata`)
-- Lossless FLAC output with tags (artist, title, album, track/disc numbers, source URL if available)
+- **FLAC or MP3 output**
+- Automatic tagging (artist, title, album, track/disc numbers, source URL if available)
 - Minimum-duration filter to drop junk clips
 - Duplicate protection based on track URL
 - Clean setup and teardown (no leftovers)
@@ -67,6 +68,33 @@ and creates a template file at:
 
 ---
 
+## Configuration
+
+Defaults are stored in:
+
+```
+~/.config/trackrec/trackrec.conf
+```
+
+Example:
+
+```bash
+TRACKREC_OUTDIR="$HOME/recordings"
+TRACKREC_FORMAT="flac"
+TRACKREC_COMP="5"
+TRACKREC_MP3_BITRATE="320k"
+TRACKREC_MIN_SECONDS="30"
+
+TRACKREC_FOLLOW="1"
+TRACKREC_FOLLOW_INTERVAL="1"
+TRACKREC_LISTEN="0"
+TRACKREC_DEDUPE="1"
+```
+
+CLI options always override these defaults.
+
+---
+
 ## Usage
 
 Start playback in any MPRIS-capable player, then:
@@ -77,13 +105,39 @@ trackrec-run <pattern>
 
 `<pattern>` matches the application stream name (case-insensitive).
 
+Example:
+
+```bash
+trackrec-run spotify
+```
+
 Optional monitoring:
 
 ```bash
-trackrec-run <pattern> --listen
+trackrec-run spotify --listen
 ```
 
 Stop with `Ctrl+C` – routing and loopbacks are reverted automatically.
+
+---
+
+## Output Format
+
+Default recording format is **FLAC**.
+
+You can switch to MP3:
+
+```bash
+trackrec-run spotify --format mp3
+```
+
+Specify bitrate:
+
+```bash
+trackrec-run spotify --format mp3 --mp3-bitrate 320k
+```
+
+These options can also be set in `trackrec.conf`.
 
 ---
 
@@ -110,6 +164,7 @@ trackrec-status --json
 ## Optional: metadata enrichment
 
 After recording, you can optionally enrich files using `trackrec-enrich`.
+
 This is a **separate batch step** and **not part of the real-time recording path**.
 
 ### Install dependency
@@ -118,7 +173,7 @@ This is a **separate batch step** and **not part of the real-time recording path
 sudo apt install python3-mutagen
 ```
 
-### Credentials via .env (recommended)
+### Credentials via `.env` (recommended)
 
 Create a local `.env` file (do not commit it):
 
@@ -144,6 +199,8 @@ trackrec-enrich recordings/
 trackrec-enrich recordings/ --write --set-year
 ```
 
+If no path is given, `trackrec-enrich` uses the configured `TRACKREC_OUTDIR`.
+
 ---
 
 ## Audio Notes
@@ -151,6 +208,7 @@ trackrec-enrich recordings/ --write --set-year
 * Recording is taken from the local PipeWire graph
 * Typical live setups run at 48 kHz; this is fine for DJ use
 * FLAC preserves the captured signal without inventing quality
+* MP3 encoding uses `libmp3lame`
 
 ---
 
@@ -163,5 +221,3 @@ This tool records **local audio output**. Users are responsible for complying wi
 ## License
 
 MIT
-
-````
