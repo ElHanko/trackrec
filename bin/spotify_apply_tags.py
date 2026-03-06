@@ -359,6 +359,7 @@ def enrich_one(
     force: bool,
     write: bool,
     set_year: bool,
+    set_date: bool,
     set_genre: bool,
     dump: bool,
     quiet: bool,
@@ -530,9 +531,13 @@ def enrich_one(
             tags_to_write[outk] = str(audio_features[k])
 
     std_writes: List[Tuple[str, str]] = []
-    if set_year and release_date and len(release_date) >= 4:
+
+    if release_date:
+        if set_date:
+            std_writes.append(("date", release_date))
+
+    if set_year and len(release_date) >= 4:
         year = release_date[:4]
-        std_writes.append(("date", release_date))
         std_writes.append(("year", year))
 
     if set_genre and artist_genres:
@@ -589,7 +594,8 @@ def main():
     ap.add_argument("--spotify-client-secret", default=os.getenv("SPOTIFY_CLIENT_SECRET", ""))
     ap.add_argument("--write", action="store_true", help="Actually write tags (default: dry-run)")
     ap.add_argument("--force", action="store_true", help="Overwrite existing tags")
-    ap.add_argument("--set-year", action="store_true", help="Also set standard year/date fields from album release_date")
+    ap.add_argument("--set-year", action="store_true", help="Set standard year field from album release_date")
+    ap.add_argument("--set-date", action="store_true", help="Set standard date field from album release_date")
     ap.add_argument("--set-genre", action="store_true", help="Also set standard genre (artist genres; weak signal)")
     ap.add_argument("--dump", action="store_true", help="Print fetched Spotify data (JSON)")
     ap.add_argument("--quiet", action="store_true", help="Less output (good for big batches)")
@@ -633,6 +639,7 @@ def main():
                 force=args.force,
                 write=args.write,
                 set_year=args.set_year,
+                set_date=args.set_date,
                 set_genre=args.set_genre,
                 dump=args.dump,
                 quiet=args.quiet,

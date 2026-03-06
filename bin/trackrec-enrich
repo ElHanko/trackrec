@@ -27,6 +27,7 @@ Options are forwarded to the tagger:
   --write
   --force
   --set-year
+  --set-date
   --set-genre
   --dump
   --quiet
