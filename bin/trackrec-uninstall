@@ -12,6 +12,7 @@ CORE_TOOLS=(
   trackrec-setup
   trackrec-status
   trackrec-stop
+  trackrec-uninstall
 )
 
 ENRICH_TOOLS=(
@@ -19,14 +20,23 @@ ENRICH_TOOLS=(
   spotify_apply_tags.py
 )
 
-echo "Removing symlinks from $BIN_DST ..."
+echo "Removing trackrec commands from $BIN_DST ..."
+
 for name in "${CORE_TOOLS[@]}" "${ENRICH_TOOLS[@]}"; do
-  rm -f "$BIN_DST/$name"
-  echo "  -> removed $name"
+  if [[ -e "$BIN_DST/$name" ]]; then
+    rm -f "$BIN_DST/$name"
+    echo "  -> removed $name"
+  fi
 done
 
 echo
-echo "Note: config files are left in place:"
+echo "trackrec commands removed."
+
+echo
+echo "Config files were NOT removed:"
 echo "  ~/.config/trackrec/trackrec.conf"
 echo "  ~/.config/trackrec/.env"
-echo "Remove them manually if you want a full wipe."
+
+echo
+echo "If you want a full wipe:"
+echo "  rm -rf ~/.config/trackrec"

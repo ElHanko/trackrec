@@ -2,20 +2,26 @@
 set -euo pipefail
 
 WITH_ENRICH=0
+LINK_MODE=0
+
 for a in "${@:-}"; do
   case "$a" in
     --with-enrich) WITH_ENRICH=1;;
+    --link) LINK_MODE=1;;
     -h|--help)
       cat <<'USAGE'
 Usage:
-  ./install.sh [--with-enrich]
+  ./install.sh [--with-enrich] [--link]
 
 Installs core trackrec tools into ~/.local/bin and sets up defaults.
 
-Optional:
-  --with-enrich   also installs optional enrichment tools (trackrec-enrich + spotify_apply_tags.py)
-                  and creates ~/.config/trackrec/.env template.
+Options:
+  --with-enrich   also install optional enrichment tools
+                  (trackrec-enrich + spotify_apply_tags.py)
+                  and create ~/.config/trackrec/.env template.
                   Requires Spotify Developer credentials + python3-mutagen.
+  --link          create symlinks instead of copying files
+                  (useful for development)
 USAGE
       exit 0
       ;;
@@ -45,6 +51,7 @@ CORE_TOOLS=(
   trackrec-setup
   trackrec-status
   trackrec-stop
+  trackrec-uninstall
 )
 
 # Optional tools (installed only with --with-enrich)
@@ -53,13 +60,22 @@ ENRICH_TOOLS=(
   spotify_apply_tags.py
 )
 
-echo "Linking tools into $BIN_DST ..."
+if [[ "$LINK_MODE" -eq 1 ]]; then
+  echo "Linking tools into $BIN_DST ..."
+else
+  echo "Installing tools into $BIN_DST ..."
+fi
 
 for name in "${CORE_TOOLS[@]}"; do
   src="$BIN_SRC/$name"
   [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
-  ln -sf "$src" "$BIN_DST/$name"
-  chmod +x "$src" || true
+
+  if [[ "$LINK_MODE" -eq 1 ]]; then
+    ln -sf "$src" "$BIN_DST/$name"
+  else
+    install -m 755 "$src" "$BIN_DST/$name"
+  fi
+
   echo "  -> $name"
 done
 
@@ -67,8 +83,13 @@ if [[ "$WITH_ENRICH" -eq 1 ]]; then
   for name in "${ENRICH_TOOLS[@]}"; do
     src="$BIN_SRC/$name"
     [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
-    ln -sf "$src" "$BIN_DST/$name"
-    chmod +x "$src" || true
+
+    if [[ "$LINK_MODE" -eq 1 ]]; then
+      ln -sf "$src" "$BIN_DST/$name"
+    else
+      install -m 755 "$src" "$BIN_DST/$name"
+    fi
+
     echo "  -> $name"
   done
 fi
