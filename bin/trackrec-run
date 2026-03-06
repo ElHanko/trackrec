@@ -117,7 +117,7 @@ match_and_move_new_streams() {
       if pactl move-sink-input "$id" rec >/dev/null 2>&1; then
         printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
       else
-        echo "WARN: failed to move sink-input #$id to rec" >&2
+        echo "Warning: failed to move sink-input #$id to rec" >&2
       fi
     fi
 
