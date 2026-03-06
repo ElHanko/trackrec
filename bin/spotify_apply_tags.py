@@ -337,6 +337,49 @@ def set_standard_field(audio: Any, field: str, value: str, force: bool) -> bool:
     audio.tags[field] = [value]
     return True
 
+def get_tag_value(audio: Any, key: str, mp3_mode: bool) -> str:
+    """Read a tag value from FLAC/Vorbis or MP3 TXXX storage."""
+    if not audio or audio.tags is None:
+        return ""
+
+    used_key = f"TXXX:{key}" if mp3_mode else key
+
+    try:
+        val = audio.tags.get(used_key)
+    except Exception:
+        return ""
+
+    if not val:
+        return ""
+
+    try:
+        return str(val[0]).strip()
+    except Exception:
+        return ""
+
+
+def is_already_enriched(audio: Any, mp3_mode: bool) -> bool:
+    """
+    Return True if the file already looks fully enriched.
+
+    We use a pragmatic completeness check:
+    - core Spotify track metadata present
+    - release date present
+    - artist genres present
+    - at least one audio feature present
+
+    This lets us skip API calls entirely on later runs unless --force is used.
+    """
+    required_keys = [
+        "SPOTIFY_TRACK_ID",
+        "SPOTIFY_TITLE",
+        "SPOTIFY_ARTIST",
+        "SPOTIFY_ALBUM",
+        "SPOTIFY_RELEASE_DATE",
+        "SPOTIFY_ARTIST_GENRES",
+        "SPOTIFY_AF_TEMPO",
+    ]
+    return all(get_tag_value(audio, key, mp3_mode) for key in required_keys)
 
 # ---------------------------------------------------------------------------
 # Per-file enrichment
@@ -382,6 +425,18 @@ def enrich_one(
     if not tid:
         eprint(f"[skip] Could not extract Spotify track id from URL: {su} ({path})")
         return False
+
+    # Open local tags early so we can skip already-enriched files before making
+    # any Spotify API requests.
+    audio = MFile(path, easy=True)
+    if not audio:
+        eprint(f"[err] mutagen could not open file for tagging: {path}")
+        return False
+
+    if not force and is_already_enriched(audio, mp3_mode):
+        if not quiet:
+            print(f"[skip] Already fully enriched: {path}")
+        return True
 
     track = spotify_get_track(token, tid)
 
@@ -483,11 +538,6 @@ def enrich_one(
             else:
                 print(f"  Release: {release_date}")
 
-    audio = MFile(path, easy=True)
-    if not audio:
-        eprint(f"[err] mutagen could not open file for tagging: {path}")
-        return False
-
     mp3_mode = is_mp3(path, audio)
 
     tags_to_write: Dict[str, str] = {
@@ -536,9 +586,9 @@ def enrich_one(
         if set_date:
             std_writes.append(("date", release_date))
 
-    if set_year and len(release_date) >= 4:
-        year = release_date[:4]
-        std_writes.append(("year", year))
+        if set_year and len(release_date) >= 4:
+            year = release_date[:4]
+            std_writes.append(("year", year))
 
     if set_genre and artist_genres:
         std_writes.append(("genre", artist_genres[0]))
@@ -664,6 +714,7 @@ def main():
                     force=args.force,
                     write=args.write,
                     set_year=args.set_year,
+                    set_date=args.set_date,
                     set_genre=args.set_genre,
                     dump=args.dump,
                     quiet=args.quiet,
