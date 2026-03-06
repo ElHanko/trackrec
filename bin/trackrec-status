@@ -46,11 +46,21 @@ fmt_epoch() {
 since_epoch() {
   local ts="$1"
   [[ -z "$ts" || ! "$ts" =~ ^[0-9]+$ ]] && return 0
-  local now delta
+
+  local now delta h m s
   now="$(date +%s)"
   delta=$(( now - ts ))
   (( delta < 0 )) && delta=0
-  printf '%dm%02ds' $((delta/60)) $((delta%60))
+
+  h=$((delta/3600))
+  m=$(((delta%3600)/60))
+  s=$((delta%60))
+
+  if (( h > 0 )); then
+    printf '%dh%02dm%02ds' "$h" "$m" "$s"
+  else
+    printf '%dm%02ds' "$m" "$s"
+  fi
 }
 
 get_server() { pactl info | sed -n 's/^Server Name: //p' || true; }
@@ -75,6 +85,7 @@ loopback_status() {
     echo "1|$mid"
     return
   fi
+
   # fallback detection
   if pactl list short modules | awk '{print $2}' | grep -qx "module-loopback"; then
     if pactl list modules | grep -q "source=rec.monitor"; then
@@ -86,7 +97,7 @@ loopback_status() {
 }
 
 recorder_lines() {
-  pgrep -af 'mpris_flac_recorder\.py' 2>/dev/null || true
+  pgrep -af 'trackrec-recorder\.py' 2>/dev/null || true
 }
 
 streams_routed_to_rec() {
@@ -102,9 +113,9 @@ streams_routed_to_rec() {
     block="$(pactl list sink-inputs | sed -n "/Sink Input #$id\b/,/^$/p")"
     sink="$(echo "$block" | sed -n 's/^[[:space:]]*Sink: \([0-9]\+\).*/\1/p' | head -n1)"
     if [[ "$sink" == "$rec_id" ]]; then
-      app="$(echo "$block" | sed -n 's/.*application.name = "\(.*\)".*/\1/p' | head -n1)"
-      bin="$(echo "$block" | sed -n 's/.*application.process.binary = "\(.*\)".*/\1/p' | head -n1)"
-      media="$(echo "$block" | sed -n 's/.*media.name = "\(.*\)".*/\1/p' | head -n1)"
+      app="$(echo "$block" | sed -n 's/^[[:space:]]*application\.name = "\(.*\)".*/\1/p' | head -n1)"
+      bin="$(echo "$block" | sed -n 's/^[[:space:]]*application\.process\.binary = "\(.*\)".*/\1/p' | head -n1)"
+      media="$(echo "$block" | sed -n 's/^[[:space:]]*media\.name = "\(.*\)".*/\1/p' | head -n1)"
       printf "%s\t%s\t%s\t%s\n" "$id" "${app:-}" "${bin:-}" "${media:-}"
     fi
   done
@@ -116,7 +127,6 @@ moved_streams_map() {
 }
 
 read_recorder_status() {
-  # prints key=value lines or nothing
   [[ -f "$STATUS_FILE" ]] && cat "$STATUS_FILE" || true
 }
 
@@ -155,10 +165,10 @@ render_human() {
   echo
   echo "-- recorder --"
   if [[ -n "$rec_lines" ]]; then
-    echo "mpris_flac_recorder.py: RUNNING"
+    echo "trackrec-recorder.py: RUNNING"
     while IFS= read -r line; do [[ -n "$line" ]] && echo "  $line"; done <<< "$rec_lines"
   else
-    echo "mpris_flac_recorder.py: not running"
+    echo "trackrec-recorder.py: not running"
   fi
 
   echo
@@ -229,7 +239,6 @@ render_json() {
   loop_mid="${loop_raw#*|}"
   rec_lines="$(recorder_lines)"
 
-  # recorder_processes array
   local rec_json="[]"
   if [[ -n "$rec_lines" ]]; then
     rec_json="["
@@ -243,7 +252,6 @@ render_json() {
     rec_json+="]"
   fi
 
-  # streams routed array
   local streams_json="[]"
   local stream_lines
   stream_lines="$(streams_routed_to_rec || true)"
@@ -259,7 +267,6 @@ render_json() {
     streams_json+="]"
   fi
 
-  # moved_streams array
   local moved_json="[]"
   local map_lines
   map_lines="$(moved_streams_map || true)"
@@ -275,7 +282,6 @@ render_json() {
     moved_json+="]"
   fi
 
-  # recorder.status (key/value) -> object
   local state="unknown" artist="" title="" file="" started_at="" spotify_url=""
   local last_result="" last_duration="" last_file="" last_spotify_url=""
   if [[ -f "$STATUS_FILE" ]]; then
