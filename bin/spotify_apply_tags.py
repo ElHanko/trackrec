@@ -1,4 +1,15 @@
 #!/usr/bin/env python3
+"""
+Read SPOTIFY_URL tags from local audio files, fetch metadata from the Spotify Web API,
+and optionally write enriched tags back to the files.
+
+Design goals:
+- batch-friendly: fetch one token and reuse it for many files
+- robust against rate limits (429) and token expiry (401)
+- work with both FLAC/Vorbis-style freeform tags and MP3 TXXX tags
+- keep write behavior conservative unless --force is used
+"""
+
 import argparse
 import base64
 import json
@@ -13,8 +24,11 @@ from urllib.request import Request, urlopen
 
 from mutagen import File as MFile
 
+# Spotify track IDs are always 22-character base62-ish strings.
 SPOTIFY_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
 
+# Default HTTP behavior for Spotify API calls.
+# These values can be overridden from the CLI in main().
 HTTP_MAX_RETRIES = 6
 HTTP_DEFAULT_SLEEP = 0.15
 HTTP_BASE_BACKOFF = 1.0
@@ -22,12 +36,27 @@ HTTP_MAX_BACKOFF = 60.0
 
 
 class SpotifyAuthError(RuntimeError):
+    """Raised for refreshable Spotify auth failures (currently HTTP 401)."""
     pass
 
 
 def eprint(*a, **kw):
+    """Print to stderr instead of stdout."""
     print(*a, file=sys.stderr, **kw)
 
+
+# ---------------------------------------------------------------------------
+# HTTP / Spotify API helpers
+# ---------------------------------------------------------------------------
+#
+# All Spotify API requests go through http_json(). This centralizes:
+# - rate-limit handling (429 + Retry-After)
+# - transient network retries
+# - auth error signaling (401 -> refreshable, 403 -> not refreshable here)
+#
+# The small default_sleep is intentional. Even a tiny pacing delay can reduce
+# the chance of hitting Spotify's rate limit during larger batch runs.
+# ---------------------------------------------------------------------------
 
 def http_json(
     req: Request,
@@ -38,9 +67,13 @@ def http_json(
     default_sleep: float = HTTP_DEFAULT_SLEEP,
 ) -> Dict[str, Any]:
     """
-    HTTP JSON with basic rate-limit handling.
-    - On 429: obey Retry-After if present, else exponential backoff.
+    Execute an HTTP request and return JSON.
+
+    Behavior:
+    - On 429: honor Retry-After if available, otherwise use exponential backoff.
     - On transient network errors: retry with backoff.
+    - On 401: raise SpotifyAuthError so caller can refresh token.
+    - On 403: raise normal RuntimeError (refreshing usually does not help).
     """
     attempt = 0
     backoff = base_backoff
@@ -83,6 +116,7 @@ def http_json(
             if e.code == 401:
                 raise SpotifyAuthError(f"HTTP 401 auth error. body={body[:200]}")
 
+            # 403 is usually a permission / policy issue, not a stale-token issue.
             if e.code == 403:
                 raise RuntimeError(f"HTTP 403 forbidden. body={body[:200]}")
 
@@ -99,7 +133,82 @@ def http_json(
             continue
 
 
+def spotify_get_token(client_id: str, client_secret: str) -> Tuple[str, int]:
+    """
+    Fetch a client-credentials token from Spotify.
+
+    Returns:
+        (access_token, expires_in_seconds)
+    """
+    basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
+    req = Request(
+        "https://accounts.spotify.com/api/token",
+        method="POST",
+        data=b"grant_type=client_credentials",
+        headers={
+            "Authorization": f"Basic {basic}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    j = http_json(req)
+    token = j.get("access_token")
+    expires = int(j.get("expires_in", 3600))
+    if not token:
+        raise RuntimeError(f"Spotify token missing in response: {j}")
+    return str(token), expires
+
+
+def spotify_get_track(token: str, track_id: str) -> Dict[str, Any]:
+    """Fetch Spotify track metadata."""
+    req = Request(
+        f"https://api.spotify.com/v1/tracks/{track_id}",
+        method="GET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    return http_json(req)
+
+
+def spotify_get_album(token: str, album_id: str) -> Dict[str, Any]:
+    """Fetch Spotify album metadata."""
+    req = Request(
+        f"https://api.spotify.com/v1/albums/{album_id}",
+        method="GET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    return http_json(req)
+
+
+def spotify_get_artist(token: str, artist_id: str) -> Dict[str, Any]:
+    """Fetch Spotify artist metadata."""
+    req = Request(
+        f"https://api.spotify.com/v1/artists/{artist_id}",
+        method="GET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    return http_json(req)
+
+
+def spotify_get_audio_features(token: str, track_id: str) -> Dict[str, Any]:
+    """Fetch Spotify audio features for a track."""
+    req = Request(
+        f"https://api.spotify.com/v1/audio-features/{track_id}",
+        method="GET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    return http_json(req)
+
+
+# ---------------------------------------------------------------------------
+# Local tag / URL handling
+# ---------------------------------------------------------------------------
+#
+# Recordings may contain multiple historical or format-specific variants of
+# the Spotify URL tag. We accept several keys here so that enrichment keeps
+# working even if older files used slightly different names.
+# ---------------------------------------------------------------------------
+
 def read_spotify_url(path: str) -> Optional[str]:
+    """Read a Spotify URL tag from a local audio file, if present."""
     audio = MFile(path, easy=True)
     if not audio or not audio.tags:
         return None
@@ -120,6 +229,14 @@ def read_spotify_url(path: str) -> Optional[str]:
 
 
 def normalize_spotify_url(u: str) -> Optional[str]:
+    """
+    Normalize supported Spotify track URL formats to:
+        https://open.spotify.com/track/<id>
+
+    Accepts:
+    - spotify:track:<id>
+    - https://open.spotify.com/track/<id>
+    """
     if not u:
         return None
     u = u.strip()
@@ -153,6 +270,7 @@ def normalize_spotify_url(u: str) -> Optional[str]:
 
 
 def spotify_track_id_from_url(u: str) -> Optional[str]:
+    """Extract the canonical Spotify track ID from a Spotify track URL."""
     nu = normalize_spotify_url(u)
     if not nu:
         return None
@@ -160,62 +278,16 @@ def spotify_track_id_from_url(u: str) -> Optional[str]:
     return tid if tid and SPOTIFY_ID_RE.match(tid) else None
 
 
-def spotify_get_token(client_id: str, client_secret: str) -> Tuple[str, int]:
-    basic = base64.b64encode(f"{client_id}:{client_secret}".encode("utf-8")).decode("ascii")
-    req = Request(
-        "https://accounts.spotify.com/api/token",
-        method="POST",
-        data=b"grant_type=client_credentials",
-        headers={
-            "Authorization": f"Basic {basic}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
-    )
-    j = http_json(req)
-    token = j.get("access_token")
-    expires = int(j.get("expires_in", 3600))
-    if not token:
-        raise RuntimeError(f"Spotify token missing in response: {j}")
-    return str(token), expires
-
-
-def spotify_get_track(token: str, track_id: str) -> Dict[str, Any]:
-    req = Request(
-        f"https://api.spotify.com/v1/tracks/{track_id}",
-        method="GET",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    return http_json(req)
-
-
-def spotify_get_album(token: str, album_id: str) -> Dict[str, Any]:
-    req = Request(
-        f"https://api.spotify.com/v1/albums/{album_id}",
-        method="GET",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    return http_json(req)
-
-
-def spotify_get_artist(token: str, artist_id: str) -> Dict[str, Any]:
-    req = Request(
-        f"https://api.spotify.com/v1/artists/{artist_id}",
-        method="GET",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    return http_json(req)
-
-
-def spotify_get_audio_features(token: str, track_id: str) -> Dict[str, Any]:
-    req = Request(
-        f"https://api.spotify.com/v1/audio-features/{track_id}",
-        method="GET",
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    return http_json(req)
-
+# ---------------------------------------------------------------------------
+# Tag writing helpers
+# ---------------------------------------------------------------------------
+#
+# FLAC/Vorbis can store arbitrary freeform keys directly.
+# MP3/EasyID3 cannot, so custom metadata must go into TXXX frames.
+# ---------------------------------------------------------------------------
 
 def is_mp3(path: str, audio: Any) -> bool:
+    """Best-effort check whether the file/tag container should be treated as MP3."""
     if path.lower().endswith(".mp3"):
         return True
     name = (audio.__class__.__name__ or "").lower() if audio else ""
@@ -224,9 +296,12 @@ def is_mp3(path: str, audio: Any) -> bool:
 
 def set_tag_easy(audio: Any, key: str, value: str, force: bool, mp3_mode: bool) -> Tuple[bool, str]:
     """
-    Returns (changed, used_key)
-    For MP3: write as TXXX:<key> to avoid EasyID3 rejecting arbitrary keys.
-    For FLAC/Vorbis: write as <key>.
+    Write a custom tag and return (changed, used_key).
+
+    For MP3:
+        write as TXXX:<key> to avoid EasyID3 rejecting arbitrary keys.
+    For FLAC/Vorbis:
+        write as <key>.
     """
     if not audio or audio.tags is None:
         return False, key
@@ -247,6 +322,11 @@ def set_tag_easy(audio: Any, key: str, value: str, force: bool, mp3_mode: bool) 
 
 
 def set_standard_field(audio: Any, field: str, value: str, force: bool) -> bool:
+    """
+    Write a normal tag field like year/date/genre.
+
+    Existing values are preserved unless --force is used.
+    """
     if not audio or audio.tags is None:
         return False
 
@@ -257,6 +337,21 @@ def set_standard_field(audio: Any, field: str, value: str, force: bool) -> bool:
     audio.tags[field] = [value]
     return True
 
+
+# ---------------------------------------------------------------------------
+# Per-file enrichment
+# ---------------------------------------------------------------------------
+#
+# Flow:
+# 1) read SPOTIFY_URL from local file tags
+# 2) normalize URL and extract track ID
+# 3) fetch Spotify track / album / artist / audio-features metadata
+# 4) optionally dump metadata to stdout
+# 5) optionally write enriched tags back to the file
+#
+# Caches are passed in from main() so large batch runs do not repeatedly fetch
+# the same album / artist / audio-features data.
+# ---------------------------------------------------------------------------
 
 def enrich_one(
     path: str,
@@ -379,6 +474,7 @@ def enrich_one(
         print(f"  DurMs : {dur_ms}")
         print(f"  Album : {album_name or '-'}")
         if release_date:
+            # Hide "(day)" because a full date is already self-explanatory.
             if release_prec == "day":
                 print(f"  Release: {release_date}")
             elif release_prec:
@@ -475,6 +571,15 @@ def enrich_one(
     return True
 
 
+# ---------------------------------------------------------------------------
+# CLI entry point
+# ---------------------------------------------------------------------------
+#
+# One Spotify token is fetched and reused for the whole batch run.
+# We refresh slightly before expiry to avoid edge cases during long runs.
+# If a single file still triggers a 401, we refresh once and retry that file.
+# ---------------------------------------------------------------------------
+
 def main():
     global HTTP_MAX_RETRIES, HTTP_DEFAULT_SLEEP
 
@@ -502,6 +607,9 @@ def main():
         sys.exit(3)
 
     token, expires = spotify_get_token(cid, csec)
+
+    # Refresh slightly before actual expiry so we do not hit expiry mid-request
+    # during longer batch runs.
     token_expires_at = time.time() + max(0, int(expires) - 60)
 
     album_cache: Dict[str, Dict[str, Any]] = {}
