@@ -20,6 +20,7 @@ need_cmd pgrep
 need_cmd awk
 need_cmd sed
 need_cmd grep
+need_cmd date
 
 u="$(id -u)"
 STATE_DIR="/run/user/$u/trackrec-run"
@@ -57,9 +58,9 @@ since_epoch() {
   s=$((delta%60))
 
   if (( h > 0 )); then
-    printf '%dh%02dm%02ds' "$h" "$m" "$s"
+    printf '%02d:%02d:%02d' "$h" "$m" "$s"
   else
-    printf '%dm%02ds' "$m" "$s"
+    printf '%02d:%02d' "$m" "$s"
   fi
 }
 
@@ -86,7 +87,6 @@ loopback_status() {
     return
   fi
 
-  # fallback detection
   if pactl list short modules | awk '{print $2}' | grep -qx "module-loopback"; then
     if pactl list modules | grep -q "source=rec.monitor"; then
       echo "1|"
@@ -122,16 +122,109 @@ streams_routed_to_rec() {
 }
 
 moved_streams_map() {
-  # outputs TSV: id\torig_sink
   [[ -f "$MAP_FILE" ]] && cat "$MAP_FILE" || true
 }
 
-read_recorder_status() {
-  [[ -f "$STATUS_FILE" ]] && cat "$STATUS_FILE" || true
+load_recorder_state() {
+  STATE=""
+  ARTIST=""
+  TITLE=""
+  FILE=""
+  STARTED_AT=""
+  SPOTIFY_URL=""
+  LAST_RESULT=""
+  LAST_DURATION=""
+  LAST_FILE=""
+  LAST_SPOTIFY_URL=""
+
+  [[ -f "$STATUS_FILE" ]] || return 0
+
+  while IFS='=' read -r k v; do
+    case "$k" in
+      STATE) STATE="$v" ;;
+      ARTIST) ARTIST="$v" ;;
+      TITLE) TITLE="$v" ;;
+      FILE) FILE="$v" ;;
+      STARTED_AT) STARTED_AT="$v" ;;
+      SPOTIFY_URL) SPOTIFY_URL="$v" ;;
+      LAST_RESULT) LAST_RESULT="$v" ;;
+      LAST_DURATION) LAST_DURATION="$v" ;;
+      LAST_FILE) LAST_FILE="$v" ;;
+      LAST_SPOTIFY_URL) LAST_SPOTIFY_URL="$v" ;;
+    esac
+  done < "$STATUS_FILE"
+}
+
+render_watch() {
+  local rp rmp rec_lines elapsed
+  rp="$(rec_present)"
+  rmp="$(recmon_present)"
+  rec_lines="$(recorder_lines)"
+  load_recorder_state
+
+  echo "== trackrec-status --watch =="
+  echo
+
+  if [[ "$rp" -ne 1 || "$rmp" -ne 1 ]]; then
+    echo "rec sink      : not ready"
+    echo "rec.monitor   : not ready"
+    [[ "$rp" -ne 1 ]] && echo "Hint          : run trackrec-setup"
+    return
+  fi
+
+  if [[ -z "$rec_lines" ]]; then
+    echo "Recorder      : not running"
+    if [[ -n "${LAST_RESULT:-}" ]]; then
+      echo
+      echo "Last result   : ${LAST_RESULT:-?}"
+      [[ -n "${LAST_DURATION:-}" ]] && echo "Last duration : ${LAST_DURATION}s"
+      [[ -n "${LAST_FILE:-}" ]] && echo "Last file     : ${LAST_FILE}"
+    fi
+    return
+  fi
+
+  case "${STATE:-}" in
+    recording)
+      elapsed="$(since_epoch "${STARTED_AT:-}")"
+      echo "Recorder      : recording"
+      if [[ -n "${ARTIST:-}" || -n "${TITLE:-}" ]]; then
+        echo "Recording     : ${ARTIST:-?} - ${TITLE:-?}"
+      else
+        echo "Recording     : (metadata not available)"
+      fi
+      [[ -n "$elapsed" ]] && echo "Elapsed       : $elapsed"
+      [[ -n "${FILE:-}" ]] && echo "File          : ${FILE}"
+      [[ -n "${SPOTIFY_URL:-}" ]] && echo "Spotify URL   : ${SPOTIFY_URL}"
+      ;;
+    skipped)
+      echo "Recorder      : running"
+      echo "State         : skipped duplicate"
+      if [[ -n "${ARTIST:-}" || -n "${TITLE:-}" ]]; then
+        echo "Track         : ${ARTIST:-?} - ${TITLE:-?}"
+      fi
+      [[ -n "${SPOTIFY_URL:-}" ]] && echo "Spotify URL   : ${SPOTIFY_URL}"
+      ;;
+    idle|"")
+      echo "Recorder      : running"
+      echo "State         : idle"
+      if [[ -n "${LAST_RESULT:-}" ]]; then
+        echo
+        echo "Last result   : ${LAST_RESULT:-?}"
+        [[ -n "${LAST_DURATION:-}" ]] && echo "Last duration : ${LAST_DURATION}s"
+        [[ -n "${LAST_FILE:-}" ]] && echo "Last file     : ${LAST_FILE}"
+      fi
+      ;;
+    *)
+      echo "Recorder      : running"
+      echo "State         : ${STATE}"
+      [[ -n "${ARTIST:-}" || -n "${TITLE:-}" ]] && echo "Track         : ${ARTIST:-?} - ${TITLE:-?}"
+      [[ -n "${FILE:-}" ]] && echo "File          : ${FILE}"
+      ;;
+  esac
 }
 
 render_human() {
-  local server def_sink def_src rp rmp rec_id loop_raw loop_on loop_mid rec_lines
+  local server def_sink def_src rp rmp rec_id loop_raw loop_on loop_mid rec_lines human since
   server="$(get_server)"
   def_sink="$(get_default_sink)"
   def_src="$(get_default_source)"
@@ -142,6 +235,7 @@ render_human() {
   loop_on="${loop_raw%%|*}"
   loop_mid="${loop_raw#*|}"
   rec_lines="$(recorder_lines)"
+  load_recorder_state
 
   echo "== trackrec-status =="
   echo
@@ -238,6 +332,7 @@ render_json() {
   loop_on="${loop_raw%%|*}"
   loop_mid="${loop_raw#*|}"
   rec_lines="$(recorder_lines)"
+  load_recorder_state
 
   local rec_json="[]"
   if [[ -n "$rec_lines" ]]; then
@@ -282,25 +377,6 @@ render_json() {
     moved_json+="]"
   fi
 
-  local state="unknown" artist="" title="" file="" started_at="" spotify_url=""
-  local last_result="" last_duration="" last_file="" last_spotify_url=""
-  if [[ -f "$STATUS_FILE" ]]; then
-    while IFS='=' read -r k v; do
-      case "$k" in
-        STATE) state="$v" ;;
-        ARTIST) artist="$v" ;;
-        TITLE) title="$v" ;;
-        FILE) file="$v" ;;
-        STARTED_AT) started_at="$v" ;;
-        SPOTIFY_URL) spotify_url="$v" ;;
-        LAST_RESULT) last_result="$v" ;;
-        LAST_DURATION) last_duration="$v" ;;
-        LAST_FILE) last_file="$v" ;;
-        LAST_SPOTIFY_URL) last_spotify_url="$v" ;;
-      esac
-    done < "$STATUS_FILE"
-  fi
-
   printf '{'
   printf '"server":"%s",' "$(json_escape "${server:-unknown}")"
   printf '"default_sink":"%s",' "$(json_escape "${def_sink:-}")"
@@ -317,22 +393,24 @@ render_json() {
   printf '"moved_streams_map_present":%s,' "$( [[ -f "$MAP_FILE" ]] && echo 1 || echo 0 )"
   printf '"moved_streams":%s,' "$moved_json"
   printf '"recorder_state":{"state":"%s","artist":"%s","title":"%s","file":"%s","started_at":"%s","spotify_url":"%s","last_result":"%s","last_duration":"%s","last_file":"%s","last_spotify_url":"%s"}' \
-    "$(json_escape "$state")" \
-    "$(json_escape "$artist")" \
-    "$(json_escape "$title")" \
-    "$(json_escape "$file")" \
-    "$(json_escape "$started_at")" \
-    "$(json_escape "$spotify_url")" \
-    "$(json_escape "$last_result")" \
-    "$(json_escape "$last_duration")" \
-    "$(json_escape "$last_file")" \
-    "$(json_escape "$last_spotify_url")"
+    "$(json_escape "$STATE")" \
+    "$(json_escape "$ARTIST")" \
+    "$(json_escape "$TITLE")" \
+    "$(json_escape "$FILE")" \
+    "$(json_escape "$STARTED_AT")" \
+    "$(json_escape "$SPOTIFY_URL")" \
+    "$(json_escape "$LAST_RESULT")" \
+    "$(json_escape "$LAST_DURATION")" \
+    "$(json_escape "$LAST_FILE")" \
+    "$(json_escape "$LAST_SPOTIFY_URL")"
   printf '}\n'
 }
 
 run_once() {
   if [[ "$JSON" -eq 1 ]]; then
     render_json
+  elif [[ "$WATCH" -eq 1 ]]; then
+    render_watch
   else
     render_human
   fi
