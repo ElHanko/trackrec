@@ -4,7 +4,7 @@ set -euo pipefail
 BIN_DST="$HOME/.local/bin"
 
 CORE_TOOLS=(
-  mpris_flac_recorder.py
+  trackrec-recorder.py
   trackrec-listen-off
   trackrec-listen-on
   trackrec-route

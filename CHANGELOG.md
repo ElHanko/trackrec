@@ -1,5 +1,21 @@
 # Changelog
 
+## v1.2.0
+
+### Features
+- Add MP3 recording support (`--format mp3`)
+- Add configurable MP3 bitrate (`--mp3-bitrate`)
+- Rename recorder from `mpris_flac_recorder.py` to `trackrec-recorder.py`
+
+### Improvements
+- Extend config defaults (`TRACKREC_FORMAT`, `TRACKREC_MP3_BITRATE`)
+- Installer respects configured output directory
+- `trackrec-enrich` defaults to `TRACKREC_OUTDIR` if no path is given
+
+### Spotify API handling
+- Retry/backoff for rate limiting (HTTP 429)
+- Token refresh and retry on expired token (HTTP 401)
+
 ## v1.1.5
 - Installer: respect `TRACKREC_OUTDIR` when creating output directory
 - `trackrec-enrich`: default to `TRACKREC_OUTDIR` if no path is given

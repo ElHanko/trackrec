@@ -37,7 +37,7 @@ mkdir -p "$BIN_DST"
 
 # Core tools (always installed)
 CORE_TOOLS=(
-  mpris_flac_recorder.py
+  trackrec-recorder.py
   trackrec-listen-off
   trackrec-listen-on
   trackrec-route
@@ -96,6 +96,8 @@ chmod 700 "$CFG_DIR" || true
 echo
 echo "Config directory: $CFG_DIR"
 
+created_cfg=0
+
 # --- trackrec.conf (defaults for trackrec-run) ---
 if [[ ! -f "$CFG_FILE" ]]; then
   cat > "$CFG_FILE" <<'CFG'
@@ -104,7 +106,16 @@ if [[ ! -f "$CFG_FILE" ]]; then
 
 TRACKREC_OUTDIR="$HOME/recordings"
 TRACKREC_MIN_SECONDS="30"
+
+# Output format: flac or mp3
+TRACKREC_FORMAT="flac"
+
+# FLAC compression level (only used with TRACKREC_FORMAT="flac")
 TRACKREC_COMP="5"
+
+# MP3 bitrate (only used with TRACKREC_FORMAT="mp3")
+TRACKREC_MP3_BITRATE="320k"
+
 TRACKREC_LISTEN="0"
 
 TRACKREC_FOLLOW="1"
@@ -114,18 +125,18 @@ TRACKREC_FOLLOW_INTERVAL="1"
 TRACKREC_DEDUPE="1"
 CFG
   chmod 600 "$CFG_FILE" || true
+  created_cfg=1
   echo "Created defaults: $CFG_FILE"
 else
   echo "Defaults exist: $CFG_FILE"
 fi
 
 # Create output directory:
-# - if we just created defaults, use the default
-# - if defaults already exist, respect configured TRACKREC_OUTDIR (if present)
-if [[ ! -f "$CFG_FILE" ]]; then
+# - if config was just created, use the default
+# - otherwise respect configured TRACKREC_OUTDIR (if present)
+if [[ "$created_cfg" -eq 1 ]]; then
   mkdir -p "$HOME/recordings" || true
 else
-  # Extract TRACKREC_OUTDIR from config (supports $HOME and ~)
   outdir="$(grep -E '^TRACKREC_OUTDIR=' "$CFG_FILE" | head -n1 | cut -d= -f2- | sed 's/^"//;s/"$//')"
   outdir="${outdir/#\~/$HOME}"
   outdir="${outdir//\$HOME/$HOME}"
@@ -161,7 +172,7 @@ To use:
   3) Fill:
        ~/.config/trackrec/.env
   4) Run:
-       trackrec-enrich <recordings-dir> --write
+       trackrec-enrich [<recordings-dir>] --write
 
 NOTE
 else

@@ -5,17 +5,14 @@ pattern="${1:-}"
 shift || true
 
 if [[ -z "$pattern" ]]; then
-  echo "Usage: trackrec-run <pattern> [--listen] [--out <dir>] [--min-seconds <n>] [--comp <0-8>] [--player <name>] [--no-follow] [--follow-interval <sec>] [--no-dedupe]"
+  echo "Usage: trackrec-run <pattern> [--listen] [--out <dir>] [--min-seconds <n>] [--comp <0-8>] [--format <flac|mp3>] [--mp3-bitrate <rate>] [--player <name>] [--no-follow] [--follow-interval <sec>] [--no-dedupe]"
   exit 1
 fi
 
 # ---- Load defaults from config (optional) ----
 CFG_FILE="$HOME/.config/trackrec/trackrec.conf"
 if [[ -f "$CFG_FILE" ]]; then
-  # Only accept TRACKREC_* assignments to reduce foot-guns.
-  # shellcheck disable=SC1090
   while IFS= read -r line || [[ -n "$line" ]]; do
-    # strip leading/trailing whitespace
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
     [[ -z "$line" ]] && continue
@@ -31,6 +28,8 @@ PLAYER="$pattern"
 OUTDIR="${TRACKREC_OUTDIR:-$HOME/recordings}"
 MIN_SECONDS="${TRACKREC_MIN_SECONDS:-30}"
 COMP="${TRACKREC_COMP:-5}"
+FORMAT="${TRACKREC_FORMAT:-flac}"
+MP3_BITRATE="${TRACKREC_MP3_BITRATE:-320k}"
 LISTEN="${TRACKREC_LISTEN:-0}"
 
 FOLLOW="${TRACKREC_FOLLOW:-1}"
@@ -44,6 +43,8 @@ while [[ $# -gt 0 ]]; do
     --out) OUTDIR="${2:-$OUTDIR}"; shift 2;;
     --min-seconds) MIN_SECONDS="${2:-$MIN_SECONDS}"; shift 2;;
     --comp) COMP="${2:-$COMP}"; shift 2;;
+    --format) FORMAT="${2:-$FORMAT}"; shift 2;;
+    --mp3-bitrate) MP3_BITRATE="${2:-$MP3_BITRATE}"; shift 2;;
     --listen) LISTEN=1; shift;;
     --no-follow) FOLLOW=0; shift;;
     --follow-interval) FOLLOW_INTERVAL="${2:-$FOLLOW_INTERVAL}"; shift 2;;
@@ -52,7 +53,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for cmd in trackrec-setup pactl trackrec-listen-on trackrec-listen-off mpris_flac_recorder.py; do
+case "$FORMAT" in
+  flac|mp3) ;;
+  *) echo "ERROR: unsupported format '$FORMAT' (use flac or mp3)" >&2; exit 2;;
+esac
+
+for cmd in trackrec-setup pactl trackrec-listen-on trackrec-listen-off trackrec-recorder.py; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Missing command: $cmd"; exit 3; }
 done
 
@@ -119,7 +125,6 @@ match_and_move_new_streams() {
   done
 }
 
-# Initial routing: require at least one match; otherwise recording makes no sense.
 match_and_move_new_streams
 if [[ ! -s "$MAP_FILE" ]]; then
   echo "No matching audio streams for '$pattern'. Start playback first."
@@ -131,7 +136,6 @@ if [[ -z "$OUTDIR" ]]; then
   exit 5
 fi
 
-# Ensure output dir exists early (fail fast)
 mkdir -p "$OUTDIR"
 
 if [[ "$LISTEN" -eq 1 ]]; then
@@ -155,17 +159,25 @@ else
 fi
 
 echo "Recording '$pattern' → $OUTDIR"
-echo "Player: $PLAYER | min-seconds: $MIN_SECONDS | FLAC comp: $COMP | dedupe: $([[ "$DEDUPE" -eq 1 ]] && echo ON || echo OFF)"
+echo "Player: $PLAYER | min-seconds: $MIN_SECONDS | format: $FORMAT | dedupe: $([[ "$DEDUPE" -eq 1 ]] && echo ON || echo OFF)"
+
+extra_args=()
+if [[ "$FORMAT" == "flac" ]]; then
+  extra_args+=(--comp "$COMP")
+elif [[ "$FORMAT" == "mp3" ]]; then
+  extra_args+=(--mp3-bitrate "$MP3_BITRATE")
+fi
 
 dedupe_args=()
 if [[ "$DEDUPE" -eq 1 ]]; then
   dedupe_args+=(--dedupe)
 fi
 
-exec mpris_flac_recorder.py \
+exec trackrec-recorder.py \
   --source rec.monitor \
   --out "$OUTDIR" \
   --player "$PLAYER" \
+  --format "$FORMAT" \
   --min-seconds "$MIN_SECONDS" \
-  --comp "$COMP" \
+  "${extra_args[@]}" \
   "${dedupe_args[@]}"
