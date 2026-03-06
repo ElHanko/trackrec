@@ -13,7 +13,7 @@ Fallback:
 
 Examples:
   trackrec-enrich --write
-  trackrec-enrich "$HOME/recordings" --write --set-year
+  trackrec-enrich --write --set-year
   trackrec-enrich "$HOME/recordings/Artist - Track.flac" --write --force
 
 Notes:
@@ -30,6 +30,8 @@ Options are forwarded to the tagger:
   --set-genre
   --dump
   --quiet
+  --max-retries <n>
+  --sleep <seconds>
 USAGE
 }
 
@@ -139,7 +141,7 @@ for p in "${paths[@]}"; do
   if [[ -d "$p" ]]; then
     while IFS= read -r -d '' f; do
       add_file "$f"
-    done < <(find "$p" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' -o -iname '*.opus' -o -iname '*.m4a' \) -print0)
+    done < <(find "$p" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' -o -iname '*.opus' -o -iname '*.m4a' \) -print0 | sort -z)
   else
     add_file "$p"
   fi

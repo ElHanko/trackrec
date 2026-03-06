@@ -15,8 +15,15 @@ from mutagen import File as MFile
 
 SPOTIFY_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
 
+HTTP_MAX_RETRIES = 6
+HTTP_DEFAULT_SLEEP = 0.15
+HTTP_BASE_BACKOFF = 1.0
+HTTP_MAX_BACKOFF = 60.0
+
+
 class SpotifyAuthError(RuntimeError):
     pass
+
 
 def eprint(*a, **kw):
     print(*a, file=sys.stderr, **kw)
@@ -25,10 +32,10 @@ def eprint(*a, **kw):
 def http_json(
     req: Request,
     *,
-    max_retries: int = 6,
-    base_backoff: float = 1.0,
-    max_backoff: float = 60.0,
-    default_sleep: float = 0.15,
+    max_retries: int = HTTP_MAX_RETRIES,
+    base_backoff: float = HTTP_BASE_BACKOFF,
+    max_backoff: float = HTTP_MAX_BACKOFF,
+    default_sleep: float = HTTP_DEFAULT_SLEEP,
 ) -> Dict[str, Any]:
     """
     HTTP JSON with basic rate-limit handling.
@@ -41,21 +48,18 @@ def http_json(
     while True:
         try:
             with urlopen(req, timeout=30) as r:
-                # tiny pacing helps a lot with 429 on big batches
                 if default_sleep > 0:
                     time.sleep(default_sleep)
                 data = r.read()
             return json.loads(data.decode("utf-8", "replace"))
 
         except HTTPError as e:
-            # Try to extract body for better errors (Spotify often returns JSON)
             body = ""
             try:
                 body = e.read().decode("utf-8", "replace")
             except Exception:
                 body = ""
 
-            # Rate limited
             if e.code == 429:
                 ra = e.headers.get("Retry-After")
                 if ra:
@@ -68,7 +72,6 @@ def http_json(
 
                 attempt += 1
                 if attempt > max_retries:
-                    # include a hint; body may contain Spotify error msg
                     raise RuntimeError(f"HTTP 429 Too Many Requests (retries exceeded). body={body[:200]}")
 
                 wait = min(max_backoff, max(0.5, wait))
@@ -77,11 +80,12 @@ def http_json(
                 backoff = min(max_backoff, backoff * 2)
                 continue
 
-            # Unauthorized / forbidden: bubble up with context
-            if e.code in (401, 403):
-                raise SpotifyAuthError(f"HTTP {e.code} auth error. body={body[:200]}")
+            if e.code == 401:
+                raise SpotifyAuthError(f"HTTP 401 auth error. body={body[:200]}")
 
-            # Other HTTP errors: no retry by default
+            if e.code == 403:
+                raise RuntimeError(f"HTTP 403 forbidden. body={body[:200]}")
+
             raise RuntimeError(f"HTTP {e.code} error. body={body[:200]}")
 
         except (URLError, TimeoutError) as e:
@@ -375,7 +379,12 @@ def enrich_one(
         print(f"  DurMs : {dur_ms}")
         print(f"  Album : {album_name or '-'}")
         if release_date:
-            print(f"  Release: {release_date} ({release_prec or '?'})")
+            if release_prec == "day":
+                print(f"  Release: {release_date}")
+            elif release_prec:
+                print(f"  Release: {release_date} ({release_prec})")
+            else:
+                print(f"  Release: {release_date}")
 
     audio = MFile(path, easy=True)
     if not audio:
@@ -467,6 +476,8 @@ def enrich_one(
 
 
 def main():
+    global HTTP_MAX_RETRIES, HTTP_DEFAULT_SLEEP
+
     ap = argparse.ArgumentParser()
     ap.add_argument("files", nargs="+", help="Audio file path(s)")
     ap.add_argument("--spotify-client-id", default=os.getenv("SPOTIFY_CLIENT_ID", ""))
@@ -477,9 +488,12 @@ def main():
     ap.add_argument("--set-genre", action="store_true", help="Also set standard genre (artist genres; weak signal)")
     ap.add_argument("--dump", action="store_true", help="Print fetched Spotify data (JSON)")
     ap.add_argument("--quiet", action="store_true", help="Less output (good for big batches)")
-    ap.add_argument("--max-retries", type=int, default=6)
+    ap.add_argument("--max-retries", type=int, default=6, help="Maximum retries for rate-limit/network errors")
     ap.add_argument("--sleep", type=float, default=0.15, help="Small pacing sleep between requests (seconds)")
     args = ap.parse_args()
+
+    HTTP_MAX_RETRIES = args.max_retries
+    HTTP_DEFAULT_SLEEP = args.sleep
 
     cid = args.spotify_client_id.strip()
     csec = args.spotify_client_secret.strip()
@@ -488,7 +502,6 @@ def main():
         sys.exit(3)
 
     token, expires = spotify_get_token(cid, csec)
-    # refresh a bit early to avoid edge cases
     token_expires_at = time.time() + max(0, int(expires) - 60)
 
     album_cache: Dict[str, Dict[str, Any]] = {}
@@ -499,7 +512,6 @@ def main():
     fail = 0
 
     for p in args.files:
-        # proactive refresh if token is near expiry
         if time.time() >= token_expires_at:
             if not args.quiet:
                 eprint("[auth] token expired/near expiry, refreshing ...")
@@ -525,7 +537,6 @@ def main():
                 fail += 1
 
         except SpotifyAuthError as ex:
-            # one refresh + one retry for this file
             eprint(f"[auth] {ex} ({p})")
             eprint("[auth] refreshing token and retrying once ...")
             try:
