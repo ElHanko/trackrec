@@ -30,11 +30,11 @@ PipeWire • MPRIS • CLI-first • FLAC/MP3
 
 trackrec routes audio streams through a dedicated PipeWire recording sink and splits recordings based on MPRIS playback events.
 
-```
+```text
 Player → PipeWire stream → rec sink → ffmpeg → per-track files
            ↑
         trackrec-run
-```
+````
 
 ---
 
@@ -67,13 +67,21 @@ cd trackrec
 source ~/.profile
 ```
 
-This installs the **core recording tools** into:
+This installs:
 
-```
+* command wrappers into:
+
+```text
 ~/.local/bin
 ```
 
-The installer **copies the binaries**, so the repository can be moved or deleted afterwards.
+* and the actual trackrec files into:
+
+```text
+~/.local/bin/trackrec
+```
+
+The default installer **copies the files**, so the repository can be moved or deleted afterwards.
 
 ---
 
@@ -85,7 +93,7 @@ If you are working on the repository itself, you can install using symlinks inst
 ./install.sh --link
 ```
 
-This keeps the installed commands linked to the repository so changes take effect immediately.
+This keeps the installed files under `~/.local/bin/trackrec` linked to the repository so changes take effect immediately.
 
 ---
 
@@ -102,7 +110,7 @@ This additionally installs:
 
 and creates a template file at:
 
-```
+```text
 ~/.config/trackrec/.env
 ```
 
@@ -118,13 +126,13 @@ trackrec-run spotify
 
 Stop recording with:
 
-```
+```text
 Ctrl+C
 ```
 
 Your recordings will appear in:
 
-```
+```text
 ~/recordings
 ```
 
@@ -150,7 +158,7 @@ Your recordings will appear in:
 
 Defaults are stored in:
 
-```
+```text
 ~/.config/trackrec/trackrec.conf
 ```
 
@@ -204,7 +212,7 @@ Stop with `Ctrl+C` — routing and loopbacks are reverted automatically.
 
 # Example Session
 
-```
+```text
 $ trackrec-run spotify
 Routing spotify → rec
 REC -> recordings/Artist - Track.flac
@@ -313,15 +321,20 @@ If no path is given, `trackrec-enrich` uses the configured `TRACKREC_OUTDIR`.
 
 # Uninstall
 
-To remove all installed trackrec commands:
+To remove all installed trackrec commands and files:
 
 ```bash
 trackrec-uninstall
 ```
 
+This removes:
+
+* wrappers from `~/.local/bin`
+* trackrec files from `~/.local/bin/trackrec`
+
 Configuration files are **not removed automatically**:
 
-```
+```text
 ~/.config/trackrec
 ```
 
@@ -350,4 +363,4 @@ Users are responsible for complying with the terms of service and applicable law
 
 MIT
 
----
+````
