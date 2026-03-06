@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.1
+
+### Changed
+
+- Installer now copies binaries into `~/.local/bin` by default instead of creating symlinks
+- Added `--link` option to install using symlinks (useful for development)
+- Renamed uninstall script to `trackrec-uninstall` and install it automatically
+- Updated README with improved installation instructions, Quick Start, command overview and examples
+
 ## v1.2.0
 
 ### Features
