@@ -71,12 +71,15 @@ load_trackrec_conf() {
 
 need_cmd python3
 
-TAGGER="$(command -v spotify_apply_tags.py || true)"
-if [[ -z "$TAGGER" ]]; then
+TAGGER="$HOME/.local/bin/trackrec/spotify_apply_tags.py"
+
+if [[ ! -x "$TAGGER" ]]; then
   if [[ -x "$(dirname "$0")/spotify_apply_tags.py" ]]; then
     TAGGER="$(dirname "$0")/spotify_apply_tags.py"
+  elif command -v spotify_apply_tags.py >/dev/null 2>&1; then
+    TAGGER="$(command -v spotify_apply_tags.py)"
   else
-    echo "Missing command: spotify_apply_tags.py (expected in PATH or alongside this script)" >&2
+    echo "Missing command: spotify_apply_tags.py" >&2
     exit 3
   fi
 fi

@@ -60,7 +60,16 @@ CORE_TOOLS=(
   trackrec-stop
   trackrec-uninstall
 )
-
+WRAPPER_TOOLS=(
+  trackrec-run
+  trackrec-status
+  trackrec-stop
+  trackrec-setup
+  trackrec-route
+  trackrec-listen-on
+  trackrec-listen-off
+  trackrec-uninstall
+)
 # Optional tools (installed only with --with-enrich)
 ENRICH_TOOLS=(
   trackrec-enrich
@@ -109,9 +118,13 @@ for name in "${ALL_TOOLS[@]}"; do
   install_tool "$name"
 done
 
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
+  WRAPPER_TOOLS+=(trackrec-enrich)
+fi
+
 echo
 echo "Creating command wrappers in $BIN_DST ..."
-for name in "${ALL_TOOLS[@]}"; do
+for name in "${WRAPPER_TOOLS[@]}"; do
   create_wrapper "$name"
   echo "  -> $name"
 done
