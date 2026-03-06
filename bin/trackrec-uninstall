@@ -2,6 +2,7 @@
 set -euo pipefail
 
 BIN_DST="$HOME/.local/bin"
+APP_DIR="$BIN_DST/trackrec"
 
 CORE_TOOLS=(
   trackrec-recorder.py
@@ -20,14 +21,26 @@ ENRICH_TOOLS=(
   spotify_apply_tags.py
 )
 
-echo "Removing trackrec commands from $BIN_DST ..."
+ALL_TOOLS=("${CORE_TOOLS[@]}" "${ENRICH_TOOLS[@]}")
 
-for name in "${CORE_TOOLS[@]}" "${ENRICH_TOOLS[@]}"; do
+echo "Removing trackrec command wrappers from $BIN_DST ..."
+for name in "${ALL_TOOLS[@]}"; do
   if [[ -e "$BIN_DST/$name" ]]; then
     rm -f "$BIN_DST/$name"
-    echo "  -> removed $name"
+    echo "  -> removed wrapper $name"
   fi
 done
+
+echo
+echo "Removing trackrec files from $APP_DIR ..."
+for name in "${ALL_TOOLS[@]}"; do
+  if [[ -e "$APP_DIR/$name" ]]; then
+    rm -f "$APP_DIR/$name"
+    echo "  -> removed file $name"
+  fi
+done
+
+rmdir "$APP_DIR" 2>/dev/null || true
 
 echo
 echo "trackrec commands removed."

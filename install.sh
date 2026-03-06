@@ -13,17 +13,22 @@ for a in "${@:-}"; do
 Usage:
   ./install.sh [--with-enrich] [--link]
 
-Installs core trackrec tools into ~/.local/bin and sets up defaults.
+Installs trackrec into ~/.local/bin with real files stored under:
+  ~/.local/bin/trackrec/
 
 Options:
   --with-enrich   also install optional enrichment tools
                   (trackrec-enrich + spotify_apply_tags.py)
                   and create ~/.config/trackrec/.env template.
                   Requires Spotify Developer credentials + python3-mutagen.
-  --link          create symlinks instead of copying files
+  --link          link files from the repository instead of copying them
                   (useful for development)
 USAGE
       exit 0
+      ;;
+    *)
+      echo "Unknown option: $a" >&2
+      exit 2
       ;;
   esac
 done
@@ -31,6 +36,7 @@ done
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BIN_SRC="$PROJECT_DIR/bin"
 BIN_DST="$HOME/.local/bin"
+APP_DIR="$BIN_DST/trackrec"
 PROFILE="$HOME/.profile"
 
 CFG_DIR="$HOME/.config/trackrec"
@@ -40,6 +46,7 @@ ENV_FILE="$CFG_DIR/.env"
 [[ -d "$BIN_SRC" ]] || { echo "ERROR: missing $BIN_SRC" >&2; exit 1; }
 
 mkdir -p "$BIN_DST"
+mkdir -p "$APP_DIR"
 
 # Core tools (always installed)
 CORE_TOOLS=(
@@ -60,41 +67,56 @@ ENRICH_TOOLS=(
   spotify_apply_tags.py
 )
 
-if [[ "$LINK_MODE" -eq 1 ]]; then
-  echo "Linking tools into $BIN_DST ..."
-else
-  echo "Installing tools into $BIN_DST ..."
+ALL_TOOLS=("${CORE_TOOLS[@]}")
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
+  ALL_TOOLS+=("${ENRICH_TOOLS[@]}")
 fi
 
-for name in "${CORE_TOOLS[@]}"; do
-  src="$BIN_SRC/$name"
+if [[ "$LINK_MODE" -eq 1 ]]; then
+  echo "Linking trackrec files into $APP_DIR ..."
+else
+  echo "Installing trackrec files into $APP_DIR ..."
+fi
+
+install_tool() {
+  local name="$1"
+  local src="$BIN_SRC/$name"
+  local dst="$APP_DIR/$name"
+
   [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
 
   if [[ "$LINK_MODE" -eq 1 ]]; then
-    ln -sf "$src" "$BIN_DST/$name"
+    ln -sf "$src" "$dst"
   else
-    install -m 755 "$src" "$BIN_DST/$name"
+    install -m 755 "$src" "$dst"
   fi
 
   echo "  -> $name"
+}
+
+create_wrapper() {
+  local name="$1"
+  local wrapper="$BIN_DST/$name"
+
+  cat > "$wrapper" <<EOF
+#!/usr/bin/env bash
+exec "\$HOME/.local/bin/trackrec/$name" "\$@"
+EOF
+  chmod 755 "$wrapper"
+}
+
+for name in "${ALL_TOOLS[@]}"; do
+  install_tool "$name"
 done
 
-if [[ "$WITH_ENRICH" -eq 1 ]]; then
-  for name in "${ENRICH_TOOLS[@]}"; do
-    src="$BIN_SRC/$name"
-    [[ -f "$src" ]] || { echo "ERROR: missing $src" >&2; exit 1; }
+echo
+echo "Creating command wrappers in $BIN_DST ..."
+for name in "${ALL_TOOLS[@]}"; do
+  create_wrapper "$name"
+  echo "  -> $name"
+done
 
-    if [[ "$LINK_MODE" -eq 1 ]]; then
-      ln -sf "$src" "$BIN_DST/$name"
-    else
-      install -m 755 "$src" "$BIN_DST/$name"
-    fi
-
-    echo "  -> $name"
-  done
-fi
-
-# Ensure ~/.local/bin is in PATH for login shells (SSH login shells load ~/.profile)
+# Ensure ~/.local/bin is in PATH for login shells
 if ! grep -q 'HOME/.local/bin' "$PROFILE" 2>/dev/null; then
   echo "Updating $PROFILE to include ~/.local/bin in PATH ..."
   cat >> "$PROFILE" <<'EOP'
@@ -119,7 +141,6 @@ echo "Config directory: $CFG_DIR"
 
 created_cfg=0
 
-# --- trackrec.conf (defaults for trackrec-run) ---
 if [[ ! -f "$CFG_FILE" ]]; then
   cat > "$CFG_FILE" <<'CFG'
 # trackrec defaults (loaded by trackrec-run)
@@ -154,7 +175,7 @@ fi
 
 # Create output directory:
 # - if config was just created, use the default
-# - otherwise respect configured TRACKREC_OUTDIR (if present)
+# - otherwise respect configured TRACKREC_OUTDIR
 if [[ "$created_cfg" -eq 1 ]]; then
   mkdir -p "$HOME/recordings" || true
 else
@@ -164,7 +185,7 @@ else
   [[ -n "$outdir" ]] && mkdir -p "$outdir" || true
 fi
 
-# --- Optional enrichment support (.env template) ---
+# Optional enrichment support (.env template)
 if [[ "$WITH_ENRICH" -eq 1 ]]; then
   if [[ ! -f "$ENV_FILE" ]]; then
     cat > "$ENV_FILE" <<'ENV'
@@ -215,5 +236,11 @@ echo "Open a new login shell (or run: source ~/.profile) then test:"
 echo "  trackrec-status"
 echo "  trackrec-run spotify"
 echo
+echo "Installed files:"
+echo "  $APP_DIR"
+echo
 echo "Edit defaults here:"
 echo "  $CFG_FILE"
+echo
+echo "To uninstall later run:"
+echo "  trackrec-uninstall"
