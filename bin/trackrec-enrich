@@ -152,4 +152,4 @@ if [[ ${#files[@]} -eq 0 ]]; then
   exit 2
 fi
 
-exec python3 "$TAGGER" "${files[@]}" "${forward[@]}"
+exec "$TAGGER" "${files[@]}" "${forward[@]}"
