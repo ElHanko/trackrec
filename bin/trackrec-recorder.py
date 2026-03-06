@@ -100,12 +100,12 @@ class Recorder:
             with open(self.index_file, "a", encoding="utf-8") as f:
                 f.write(url + "\n")
         except Exception as e:
-            print(f"Warn: could not write index file '{self.index_file}': {e}")
+            print(f"Warning: could not write index file '{self.index_file}': {e}")
 
     def connect_player(self):
         self.player_name = pick_mpris_player(self.bus, self.preferred_player)
         if not self.player_name:
-            print("Kein MPRIS-Player gefunden.")
+            print("No MPRIS player found.")
             return False
 
         obj = self.bus.get_object(self.player_name, "/org/mpris/MediaPlayer2")
@@ -118,7 +118,7 @@ class Recorder:
             path="/org/mpris/MediaPlayer2",
         )
 
-        print(f"Nutze MPRIS-Player: {self.player_name}")
+        print(f"Using MPRIS player: {self.player_name}")
         return True
 
     def get_playback_status(self):
