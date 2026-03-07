@@ -17,10 +17,8 @@ Installs trackrec into ~/.local/bin with real files stored under:
   ~/.local/bin/trackrec/
 
 Options:
-  --with-enrich   also install optional enrichment tools
-                  (trackrec-enrich + spotify_apply_tags.py)
+--with-enrich     also install optional enrichment support for trackrec-enrich
                   and create ~/.config/trackrec/.env template.
-                  Requires Spotify Developer credentials + python3-mutagen.
   --link          link files from the repository instead of copying them
                   (useful for development)
 USAGE
@@ -73,7 +71,8 @@ WRAPPER_TOOLS=(
 # Optional tools (installed only with --with-enrich)
 ENRICH_TOOLS=(
   trackrec-enrich
-  spotify_apply_tags.py
+  trackrec-enrich-spot
+  trackrec-enrich-spot.py
 )
 
 ALL_TOOLS=("${CORE_TOOLS[@]}")
