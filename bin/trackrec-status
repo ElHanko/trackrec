@@ -418,7 +418,7 @@ run_once() {
 
 if [[ "$WATCH" -eq 1 ]]; then
   while true; do
-    printf '\033c'
+    printf '\033[H\033[J'
     run_once
     sleep "$INTERVAL"
   done
