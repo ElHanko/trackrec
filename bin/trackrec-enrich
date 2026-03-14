@@ -1,3 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
-exec trackrec-enrich-spot "$@"
+
+BACKEND="$HOME/.local/bin/trackrec/trackrec-enrich-spot"
+
+if [[ ! -x "$BACKEND" ]]; then
+  if [[ -x "$(dirname "$0")/trackrec-enrich-spot" ]]; then
+    BACKEND="$(dirname "$0")/trackrec-enrich-spot"
+  else
+    echo "Missing internal backend: trackrec-enrich-spot" >&2
+    exit 3
+  fi
+fi
+
+exec "$BACKEND" "$@"
