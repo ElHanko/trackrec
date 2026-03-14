@@ -517,9 +517,12 @@ def enrich_one(
     else:
         try:
             audio_features = spotify_get_audio_features(token, tid) or {}
-        except Exception:
+        except Exception as ex:
             audio_features = {}
+            if not quiet:
+                eprint(f"[warn] could not fetch Spotify audio features: {ex} ({path})")
         af_cache[tid] = audio_features
+
 
     if dump:
         out = {
@@ -621,6 +624,10 @@ def enrich_one(
         std_writes.append(("genre", artist_genres[0]))
 
     if dj:
+        if dj and not audio_features:
+            if not quiet:
+                eprint(f"[warn] no audio features available; bpm/initialkey not written ({path})")
+
         tempo = audio_features.get("tempo")
         if tempo is not None:
             try:
@@ -761,6 +768,7 @@ def main():
                     set_year=args.set_year,
                     set_date=args.set_date,
                     set_genre=args.set_genre,
+                    dj=args.dj,
                     dump=args.dump,
                     quiet=args.quiet,
                     album_cache=album_cache,
