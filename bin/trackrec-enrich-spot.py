@@ -433,6 +433,8 @@ def enrich_one(
         eprint(f"[err] mutagen could not open file for tagging: {path}")
         return False
 
+    mp3_mode = is_mp3(path, audio)
+
     if not force and is_already_enriched(audio, mp3_mode):
         if not quiet:
             print(f"[skip] Already fully enriched: {path}")
@@ -537,8 +539,6 @@ def enrich_one(
                 print(f"  Release: {release_date} ({release_prec})")
             else:
                 print(f"  Release: {release_date}")
-
-    mp3_mode = is_mp3(path, audio)
 
     tags_to_write: Dict[str, str] = {
         "SPOTIFY_URL": su,
