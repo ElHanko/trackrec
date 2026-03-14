@@ -357,6 +357,32 @@ def get_tag_value(audio: Any, key: str, mp3_mode: bool) -> str:
     except Exception:
         return ""
 
+def spotify_key_to_initialkey(key: Any, mode: Any) -> str:
+    """
+    Convert Spotify audio_features key/mode to a standard musical key string
+    suitable for the 'initialkey' tag, e.g.:
+      key=9, mode=0 -> Am
+      key=0, mode=1 -> C
+    """
+    try:
+        key_i = int(key)
+        mode_i = int(mode)
+    except Exception:
+        return ""
+
+    key_names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+    if key_i < 0 or key_i > 11:
+        return ""
+
+    out = key_names[key_i]
+    if mode_i == 0:
+        out += "m"
+    elif mode_i != 1:
+        return ""
+
+    return out
+
 
 def is_already_enriched(audio: Any, mp3_mode: bool) -> bool:
     """
@@ -404,6 +430,7 @@ def enrich_one(
     set_year: bool,
     set_date: bool,
     set_genre: bool,
+    dj: bool,
     dump: bool,
     quiet: bool,
     album_cache: Dict[str, Dict[str, Any]],
@@ -593,6 +620,22 @@ def enrich_one(
     if set_genre and artist_genres:
         std_writes.append(("genre", artist_genres[0]))
 
+    if dj:
+        tempo = audio_features.get("tempo")
+        if tempo is not None:
+            try:
+                std_writes.append(("bpm", str(round(float(tempo), 2))))
+            except Exception:
+                pass
+
+        initialkey = spotify_key_to_initialkey(
+            audio_features.get("key"),
+            audio_features.get("mode"),
+        )
+        if initialkey:
+            std_writes.append(("initialkey", initialkey))
+
+
     if not write:
         if not quiet:
             print("Dry-run only. Use --write to actually write.")
@@ -648,6 +691,7 @@ def main():
     ap.add_argument("--set-date", action="store_true", help="Set standard date field from album release_date")
     ap.add_argument("--set-genre", action="store_true", help="Also set standard genre (artist genres; weak signal)")
     ap.add_argument("--dump", action="store_true", help="Print fetched Spotify data (JSON)")
+    ap.add_argument("--dj", action="store_true", help="Also write DJ-friendly standard tags (bpm, initialkey)")
     ap.add_argument("--quiet", action="store_true", help="Less output (good for big batches)")
     ap.add_argument("--max-retries", type=int, default=6, help="Maximum retries for rate-limit/network errors")
     ap.add_argument("--sleep", type=float, default=0.15, help="Small pacing sleep between requests (seconds)")
@@ -691,6 +735,7 @@ def main():
                 set_year=args.set_year,
                 set_date=args.set_date,
                 set_genre=args.set_genre,
+                dj=args.dj,
                 dump=args.dump,
                 quiet=args.quiet,
                 album_cache=album_cache,
