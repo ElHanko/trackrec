@@ -58,7 +58,18 @@ case "$FORMAT" in
   *) echo "ERROR: unsupported format '$FORMAT' (use flac or mp3)" >&2; exit 2;;
 esac
 
-for cmd in trackrec-setup pactl trackrec-listen-on trackrec-listen-off trackrec-recorder.py; do
+RECORDER="$HOME/.local/bin/trackrec/trackrec-recorder.py"
+
+if [[ ! -x "$RECORDER" ]]; then
+  if [[ -x "$(dirname "$0")/trackrec-recorder.py" ]]; then
+    RECORDER="$(dirname "$0")/trackrec-recorder.py"
+  else
+    echo "Missing internal recorder: trackrec-recorder.py" >&2
+    exit 3
+  fi
+fi
+
+for cmd in trackrec-setup pactl trackrec-listen-on trackrec-listen-off; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Missing command: $cmd"; exit 3; }
 done
 
@@ -173,7 +184,7 @@ if [[ "$DEDUPE" -eq 1 ]]; then
   dedupe_args+=(--dedupe)
 fi
 
-exec trackrec-recorder.py \
+exec "$RECORDER" \
   --source rec.monitor \
   --out "$OUTDIR" \
   --player "$PLAYER" \
