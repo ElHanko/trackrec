@@ -125,7 +125,7 @@ Comment=Start recording Spotify with trackrec
 Exec=$LAUNCHER_DIR/spotify-record.sh
 Icon=media-record
 Terminal=true
-Categories=AudioVideo;Trackrec;
+Categories=Trackrec;
 EOD
 
 cat > "$APP_DIR/trackrec-status-watch.desktop" <<EOD
@@ -137,7 +137,7 @@ Comment=Watch live trackrec status
 Exec=$LAUNCHER_DIR/status-watch.sh
 Icon=utilities-system-monitor
 Terminal=true
-Categories=AudioVideo;Trackrec;
+Categories=Trackrec;
 EOD
 
 cat > "$APP_DIR/trackrec-enrich-recordings.desktop" <<EOD
@@ -149,7 +149,7 @@ Comment=Enrich recordings with Spotify metadata
 Exec=$LAUNCHER_DIR/enrich-recordings.sh
 Icon=media-tape
 Terminal=true
-Categories=AudioVideo;Trackrec;
+Categories=Trackrec;
 EOD
 
 cat > "$APP_DIR/trackrec-stop.desktop" <<EOD
@@ -161,7 +161,7 @@ Comment=Stop running trackrec recorder
 Exec=$LAUNCHER_DIR/stop.sh
 Icon=media-playback-stop
 Terminal=true
-Categories=AudioVideo;Trackrec;
+Categories=Trackrec;
 EOD
 
 cat > "$APP_DIR/trackrec-listen-on.desktop" <<EOD
@@ -173,7 +173,7 @@ Comment=Enable trackrec monitoring loopback
 Exec=$LAUNCHER_DIR/listen-on.sh
 Icon=audio-volume-high
 Terminal=true
-Categories=AudioVideo;Trackrec;
+Categories=Trackrec;
 EOD
 
 cat > "$APP_DIR/trackrec-listen-off.desktop" <<EOD
@@ -185,7 +185,7 @@ Comment=Disable trackrec monitoring loopback
 Exec=$LAUNCHER_DIR/listen-off.sh
 Icon=audio-volume-muted
 Terminal=true
-Categories=AudioVideo;Trackrec;
+Categories=Trackrec;
 EOD
 
 chmod 644 \
@@ -206,5 +206,7 @@ echo
 echo "Menu entries:"
 echo "  $APP_DIR"
 echo
-echo "If they do not appear immediately run:"
+echo "If duplicates were shown before, clear old cache with:"
+echo "  rm -f ~/.cache/xfce4/desktop/menu-cache/*"
+echo "Then reload:"
 echo "  xfdesktop --reload"
