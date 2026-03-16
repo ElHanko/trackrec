@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+TRACKREC_SETUP="$SCRIPT_DIR/trackrec-setup"
+TRACKREC_LISTEN_ON="$SCRIPT_DIR/trackrec-listen-on"
+TRACKREC_LISTEN_OFF="$SCRIPT_DIR/trackrec-listen-off"
+RECORDER="$SCRIPT_DIR/trackrec-recorder.py"
+
 pattern="${1:-}"
 shift || true
 
@@ -58,20 +65,14 @@ case "$FORMAT" in
   *) echo "ERROR: unsupported format '$FORMAT' (use flac or mp3)" >&2; exit 2;;
 esac
 
-RECORDER="$HOME/.local/bin/trackrec/trackrec-recorder.py"
-
-if [[ ! -x "$RECORDER" ]]; then
-  if [[ -x "$(dirname "$0")/trackrec-recorder.py" ]]; then
-    RECORDER="$(dirname "$0")/trackrec-recorder.py"
-  else
-    echo "Missing internal recorder: trackrec-recorder.py" >&2
-    exit 3
-  fi
-fi
-
-for cmd in trackrec-setup pactl trackrec-listen-on trackrec-listen-off; do
+for cmd in pactl awk sed grep tr head mkdir rm kill wait sleep; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Missing command: $cmd"; exit 3; }
 done
+
+[[ -x "$TRACKREC_SETUP" ]] || { echo "Missing internal script: $TRACKREC_SETUP" >&2; exit 3; }
+[[ -x "$TRACKREC_LISTEN_ON" ]] || { echo "Missing internal script: $TRACKREC_LISTEN_ON" >&2; exit 3; }
+[[ -x "$TRACKREC_LISTEN_OFF" ]] || { echo "Missing internal script: $TRACKREC_LISTEN_OFF" >&2; exit 3; }
+[[ -x "$RECORDER" ]] || { echo "Missing internal recorder: $RECORDER" >&2; exit 3; }
 
 STATE_DIR="/run/user/$(id -u)/trackrec-run"
 MAP_FILE="$STATE_DIR/moved-streams.tsv"     # stream_id \t orig_sink_id
@@ -83,7 +84,7 @@ mkdir -p "$STATE_DIR"
 cleanup() {
   set +e
 
-  [[ "$LISTEN" -eq 1 ]] && trackrec-listen-off >/dev/null 2>&1 || true
+  [[ "$LISTEN" -eq 1 ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1 || true
 
   if [[ -n "${FOLLOW_PID:-}" ]]; then
     kill "$FOLLOW_PID" >/dev/null 2>&1 || true
@@ -100,7 +101,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-trackrec-setup
+"$TRACKREC_SETUP"
 
 pat_lc="$(echo "$pattern" | tr '[:upper:]' '[:lower:]')"
 
@@ -150,7 +151,7 @@ fi
 mkdir -p "$OUTDIR"
 
 if [[ "$LISTEN" -eq 1 ]]; then
-  trackrec-listen-on
+  "$TRACKREC_LISTEN_ON"
   echo "Listen: ON"
 else
   echo "Listen: OFF (silent capture)"
