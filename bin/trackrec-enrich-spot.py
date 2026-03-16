@@ -392,9 +392,9 @@ def is_already_enriched(audio: Any, mp3_mode: bool) -> bool:
     - core Spotify track metadata present
     - release date present
     - artist genres present
-    - at least one audio feature present
 
-    This lets us skip API calls entirely on later runs unless --force is used.
+    Audio features are intentionally NOT required, because Spotify may deny
+    access to them (HTTP 403) for many apps.
     """
     required_keys = [
         "SPOTIFY_TRACK_ID",
@@ -403,7 +403,6 @@ def is_already_enriched(audio: Any, mp3_mode: bool) -> bool:
         "SPOTIFY_ALBUM",
         "SPOTIFY_RELEASE_DATE",
         "SPOTIFY_ARTIST_GENRES",
-        "SPOTIFY_AF_TEMPO",
     ]
     return all(get_tag_value(audio, key, mp3_mode) for key in required_keys)
 
@@ -512,16 +511,20 @@ def enrich_one(
             except Exception:
                 artist_genres = []
 
-    if tid in af_cache:
-        audio_features = af_cache[tid]
-    else:
-        try:
-            audio_features = spotify_get_audio_features(token, tid) or {}
-        except Exception as ex:
-            audio_features = {}
-            if not quiet:
-                eprint(f"[warn] could not fetch Spotify audio features: {ex} ({path})")
-        af_cache[tid] = audio_features
+    audio_features: Dict[str, Any] = {}
+    need_audio_features = dj or dump
+
+    if need_audio_features:
+        if tid in af_cache:
+            audio_features = af_cache[tid]
+        else:
+            try:
+                audio_features = spotify_get_audio_features(token, tid) or {}
+            except Exception as ex:
+                audio_features = {}
+                if dj and not quiet:
+                    eprint(f"[warn] could not fetch Spotify audio features: {ex} ({path})")
+            af_cache[tid] = audio_features
 
 
     if dump:
@@ -624,7 +627,7 @@ def enrich_one(
         std_writes.append(("genre", artist_genres[0]))
 
     if dj:
-        if dj and not audio_features:
+        if not audio_features:
             if not quiet:
                 eprint(f"[warn] no audio features available; bpm/initialkey not written ({path})")
 
