@@ -51,6 +51,7 @@ CORE_TOOLS=(
   trackrec-recorder.py
   trackrec-listen-off
   trackrec-listen-on
+  trackrec-normalize
   trackrec-route
   trackrec-run
   trackrec-setup
@@ -66,6 +67,7 @@ WRAPPER_TOOLS=(
   trackrec-route
   trackrec-listen-on
   trackrec-listen-off
+  trackrec-normalize
   trackrec-uninstall
 )
 # Optional tools (installed only with --with-enrich)

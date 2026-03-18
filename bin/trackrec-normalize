@@ -1,0 +1,270 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  trackrec-normalize [<path...>] [options]
+
+If no <path> is given, trackrec-normalize uses TRACKREC_OUTDIR from:
+  ~/.config/trackrec/trackrec.conf
+Fallback:
+  $HOME/recordings
+
+Examples:
+  trackrec-normalize
+  trackrec-normalize --write
+  trackrec-normalize ~/recordings --write
+  trackrec-normalize "~/recordings/Artist - Track.flac" --write --replace
+  trackrec-normalize ~/recordings --write --preset dj
+  trackrec-normalize ~/recordings --write --preset streaming
+  trackrec-normalize ~/recordings --write --target-i -8 --target-tp -1.0 --target-lra 6
+
+Options:
+  --write              actually run ffmpeg (default: dry-run)
+  --replace            replace original file after successful normalize
+  --suffix <name>      suffix for non-replace output files (default: normalized)
+  --preset <name>      loudnorm preset: dj, streaming, safe (default: dj)
+  --target-i <lufs>    loudnorm integrated loudness target
+  --target-tp <db>     loudnorm true peak target
+  --target-lra <val>   loudnorm loudness range target
+  -h, --help           show this help
+
+Notes:
+  - Presets set sensible defaults for loudnorm.
+  - Manual target flags override preset values.
+USAGE
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Missing command: $1" >&2
+    exit 3
+  }
+}
+
+load_trackrec_conf() {
+  local cfg="$HOME/.config/trackrec/trackrec.conf"
+  [[ -f "$cfg" ]] || return 0
+
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" =~ ^# ]] && continue
+    if [[ "$line" =~ ^TRACKREC_[A-Z0-9_]+= ]]; then
+      eval "$line"
+    fi
+  done < "$cfg"
+}
+
+apply_preset() {
+  case "$PRESET" in
+    dj)
+      TARGET_I="-9"
+      TARGET_TP="-1.0"
+      TARGET_LRA="8"
+      ;;
+    streaming)
+      TARGET_I="-14"
+      TARGET_TP="-1.5"
+      TARGET_LRA="11"
+      ;;
+    safe)
+      TARGET_I="-12"
+      TARGET_TP="-1.5"
+      TARGET_LRA="10"
+      ;;
+    *)
+      echo "ERROR: unknown preset '$PRESET' (use dj, streaming, safe)" >&2
+      exit 2
+      ;;
+  esac
+}
+
+need_cmd ffmpeg
+need_cmd find
+need_cmd mktemp
+need_cmd mv
+need_cmd rm
+
+WRITE=0
+REPLACE=0
+SUFFIX="normalized"
+PRESET="dj"
+
+TARGET_I=""
+TARGET_TP=""
+TARGET_LRA=""
+
+MANUAL_I=0
+MANUAL_TP=0
+MANUAL_LRA=0
+
+paths=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --write)
+      WRITE=1
+      shift
+      ;;
+    --replace)
+      REPLACE=1
+      shift
+      ;;
+    --suffix)
+      SUFFIX="${2:-}"
+      [[ -n "$SUFFIX" ]] || { echo "ERROR: --suffix requires a value" >&2; exit 2; }
+      shift 2
+      ;;
+    --preset)
+      PRESET="${2:-}"
+      [[ -n "$PRESET" ]] || { echo "ERROR: --preset requires a value" >&2; exit 2; }
+      shift 2
+      ;;
+    --target-i)
+      TARGET_I="${2:-}"
+      [[ -n "$TARGET_I" ]] || { echo "ERROR: --target-i requires a value" >&2; exit 2; }
+      MANUAL_I=1
+      shift 2
+      ;;
+    --target-tp)
+      TARGET_TP="${2:-}"
+      [[ -n "$TARGET_TP" ]] || { echo "ERROR: --target-tp requires a value" >&2; exit 2; }
+      MANUAL_TP=1
+      shift 2
+      ;;
+    --target-lra)
+      TARGET_LRA="${2:-}"
+      [[ -n "$TARGET_LRA" ]] || { echo "ERROR: --target-lra requires a value" >&2; exit 2; }
+      MANUAL_LRA=1
+      shift 2
+      ;;
+    --*)
+      echo "Unknown option: $1" >&2
+      exit 2
+      ;;
+    *)
+      paths+=("$1")
+      shift
+      ;;
+  esac
+done
+
+apply_preset
+
+# manual overrides win over preset
+[[ "$MANUAL_I" -eq 1 ]] || TARGET_I="${TARGET_I:-}"
+[[ "$MANUAL_TP" -eq 1 ]] || TARGET_TP="${TARGET_TP:-}"
+[[ "$MANUAL_LRA" -eq 1 ]] || TARGET_LRA="${TARGET_LRA:-}"
+
+load_trackrec_conf
+
+default_outdir="${TRACKREC_OUTDIR:-}"
+default_outdir="${default_outdir/#\~/$HOME}"
+default_outdir="${default_outdir//\$HOME/$HOME}"
+
+if [[ -z "$default_outdir" ]]; then
+  [[ -d "$HOME/recordings" ]] && default_outdir="$HOME/recordings"
+fi
+
+if [[ ${#paths[@]} -eq 0 ]]; then
+  if [[ -z "$default_outdir" || ! -d "$default_outdir" ]]; then
+    echo "ERROR: No input path given and no valid default found." >&2
+    echo "Either:" >&2
+    echo "  - pass a path to trackrec-normalize" >&2
+    echo "  - or set TRACKREC_OUTDIR in ~/.config/trackrec/trackrec.conf" >&2
+    exit 2
+  fi
+  paths+=("$default_outdir")
+fi
+
+files=()
+
+add_file() {
+  local f="$1"
+  [[ -f "$f" ]] || return 0
+  case "${f,,}" in
+    *.flac|*.mp3|*.ogg|*.opus|*.m4a) files+=("$f") ;;
+  esac
+}
+
+for p in "${paths[@]}"; do
+  if [[ -d "$p" ]]; then
+    while IFS= read -r -d '' f; do
+      add_file "$f"
+    done < <(find "$p" -type f \( -iname '*.flac' -o -iname '*.mp3' -o -iname '*.ogg' -o -iname '*.opus' -o -iname '*.m4a' \) -print0 | sort -z)
+  else
+    add_file "$p"
+  fi
+done
+
+if [[ ${#files[@]} -eq 0 ]]; then
+  echo "No supported audio files found in: ${paths[*]}" >&2
+  exit 2
+fi
+
+normalize_one() {
+  local in="$1"
+  local dir base ext stem out tmp
+
+  dir="$(dirname "$in")"
+  base="$(basename "$in")"
+  ext="${base##*.}"
+  stem="${base%.*}"
+
+  if [[ "$REPLACE" -eq 1 ]]; then
+    tmp="$(mktemp --tmpdir="$dir" ".trackrec-normalize-${stem}.XXXXXX.${ext}")"
+    out="$in"
+  else
+    out="$dir/${stem}.${SUFFIX}.${ext}"
+    tmp="$out"
+  fi
+
+  echo
+  echo "Input : $in"
+  echo "Output: $out"
+  echo "Mode  : $([[ "$REPLACE" -eq 1 ]] && echo replace || echo copy)"
+  echo "Preset: $PRESET"
+  echo "Filter: loudnorm=I=${TARGET_I}:TP=${TARGET_TP}:LRA=${TARGET_LRA}"
+
+  if [[ "$WRITE" -ne 1 ]]; then
+    echo "Dry-run only. Use --write to actually normalize."
+    return 0
+  fi
+
+  ffmpeg -hide_banner -loglevel error -y \
+    -i "$in" \
+    -map_metadata 0 \
+    -af "loudnorm=I=${TARGET_I}:TP=${TARGET_TP}:LRA=${TARGET_LRA}" \
+    "$tmp"
+
+  if [[ "$REPLACE" -eq 1 ]]; then
+    mv -f "$tmp" "$out"
+  fi
+
+  echo "Done."
+}
+
+ok=0
+fail=0
+
+for f in "${files[@]}"; do
+  if normalize_one "$f"; then
+    ok=$((ok + 1))
+  else
+    fail=$((fail + 1))
+    echo "[err] normalize failed: $f" >&2
+  fi
+done
+
+echo
+echo "Done: ok=$ok fail=$fail"
+
+exit $([[ "$fail" -eq 0 ]] && echo 0 || echo 1)
