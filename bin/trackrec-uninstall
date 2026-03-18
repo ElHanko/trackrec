@@ -8,6 +8,7 @@ CORE_TOOLS=(
   trackrec-recorder.py
   trackrec-listen-off
   trackrec-listen-on
+  trackrec-normalize
   trackrec-route
   trackrec-run
   trackrec-setup
@@ -45,6 +46,32 @@ rmdir "$APP_DIR" 2>/dev/null || true
 
 echo
 echo "trackrec commands removed."
+
+echo
+echo "Removing trackrec launcher scripts ..."
+LAUNCHER_DIR="$HOME/.local/bin/trackrec-launcher"
+
+if [[ -d "$LAUNCHER_DIR" ]]; then
+  rm -rf "$LAUNCHER_DIR"
+  echo "  -> removed $LAUNCHER_DIR"
+fi
+
+echo
+echo "Removing trackrec desktop entries ..."
+APP_DESKTOP_DIR="$HOME/.local/share/applications"
+
+shopt -s nullglob
+for f in "$APP_DESKTOP_DIR"/trackrec-*.desktop; do
+  rm -f "$f"
+  echo "  -> removed $(basename "$f")"
+done
+shopt -u nullglob
+
+MENU_DIR="$HOME/.config/menus/applications-merged"
+DIR_DIR="$HOME/.local/share/desktop-directories"
+
+rm -f "$MENU_DIR/trackrec.menu"
+rm -f "$DIR_DIR/trackrec.directory"
 
 echo
 echo "Config files were NOT removed:"
