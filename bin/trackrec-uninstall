@@ -70,8 +70,20 @@ shopt -u nullglob
 MENU_DIR="$HOME/.config/menus/applications-merged"
 DIR_DIR="$HOME/.local/share/desktop-directories"
 
-rm -f "$MENU_DIR/trackrec.menu"
-rm -f "$DIR_DIR/trackrec.directory"
+if [[ -e "$MENU_DIR/trackrec.menu" ]]; then
+  rm -f "$MENU_DIR/trackrec.menu"
+  echo "  -> removed trackrec.menu"
+fi
+
+if [[ -e "$DIR_DIR/trackrec.directory" ]]; then
+  rm -f "$DIR_DIR/trackrec.directory"
+  echo "  -> removed trackrec.directory"
+fi
+
+echo
+echo "If menu entries still appear, refresh XFCE:"
+echo "  rm -f ~/.cache/xfce4/desktop/menu-cache/*"
+echo "  xfdesktop --reload"
 
 echo
 echo "Config files were NOT removed:"
