@@ -14,6 +14,7 @@ Fallback:
 Examples:
   trackrec-enrich --write
   trackrec-enrich --write --set-year
+  trackrec-enrich --write --dj
   trackrec-enrich "$HOME/recordings/Artist - Track.flac" --write --force
 
 Notes:
@@ -29,10 +30,12 @@ Options are forwarded to the tagger:
   --set-year
   --set-date
   --set-genre
+  --dj
   --dump
   --quiet
   --max-retries <n>
   --sleep <seconds>
+
 USAGE
 }
 

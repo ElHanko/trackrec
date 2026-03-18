@@ -18,7 +18,8 @@ CORE_TOOLS=(
 
 ENRICH_TOOLS=(
   trackrec-enrich
-  spotify_apply_tags.py
+  trackrec-enrich-spot
+  trackrec-enrich-spot.py
 )
 
 ALL_TOOLS=("${CORE_TOOLS[@]}" "${ENRICH_TOOLS[@]}")
