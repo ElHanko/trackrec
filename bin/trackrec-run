@@ -12,7 +12,7 @@ pattern="${1:-}"
 shift || true
 
 if [[ -z "$pattern" ]]; then
-  echo "Usage: trackrec-run <pattern> [--listen] [--out <dir>] [--min-seconds <n>] [--comp <0-8>] [--format <flac|mp3>] [--mp3-bitrate <rate>] [--player <name>] [--no-follow] [--follow-interval <sec>] [--no-dedupe]"
+  echo "Usage: trackrec-run <pattern> [--listen] [--out <dir>] [--min-seconds <n>] [--comp <0-8>] [--format <flac|mp3>] [--mp3-bitrate <rate>] [--player <name>] [--no-follow] [--follow-interval <sec>] [--no-dedupe] [--force-volume] [--no-force-volume]"
   exit 1
 fi
 
@@ -43,6 +43,7 @@ FOLLOW="${TRACKREC_FOLLOW:-1}"
 FOLLOW_INTERVAL="${TRACKREC_FOLLOW_INTERVAL:-1}"
 
 DEDUPE="${TRACKREC_DEDUPE:-1}"   # default ON
+FORCE_VOLUME="${TRACKREC_FORCE_VOLUME:-1}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -56,6 +57,8 @@ while [[ $# -gt 0 ]]; do
     --no-follow) FOLLOW=0; shift;;
     --follow-interval) FOLLOW_INTERVAL="${2:-$FOLLOW_INTERVAL}"; shift 2;;
     --no-dedupe) DEDUPE=0; shift;;
+    --force-volume) FORCE_VOLUME=1; shift;;
+    --no-force-volume) FORCE_VOLUME=0; shift;;
     *) echo "Unknown option: $1"; exit 2;;
   esac
 done
@@ -127,6 +130,9 @@ match_and_move_new_streams() {
 
     if echo "$hay" | grep -qF "$pat_lc"; then
       if pactl move-sink-input "$id" rec >/dev/null 2>&1; then
+        if [[ "$FORCE_VOLUME" -eq 1 ]]; then
+          pactl set-sink-input-volume "$id" 100% >/dev/null 2>&1 || true
+        fi
         printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
       else
         echo "Warning: failed to move sink-input #$id to rec" >&2
@@ -171,7 +177,7 @@ else
 fi
 
 echo "Recording '$pattern' → $OUTDIR"
-echo "Player: $PLAYER | min-seconds: $MIN_SECONDS | format: $FORMAT | dedupe: $([[ "$DEDUPE" -eq 1 ]] && echo ON || echo OFF)"
+echo "Player: $PLAYER | min-seconds: $MIN_SECONDS | format: $FORMAT | dedupe: $([[ "$DEDUPE" -eq 1 ]] && echo ON || echo OFF) | force-volume: $([[ "$FORCE_VOLUME" -eq 1 ]] && echo ON || echo OFF)"
 
 extra_args=()
 if [[ "$FORMAT" == "flac" ]]; then

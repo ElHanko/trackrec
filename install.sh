@@ -177,12 +177,27 @@ TRACKREC_FOLLOW_INTERVAL="1"
 
 # default ON (recommended)
 TRACKREC_DEDUPE="1"
+
+# force matched app stream volume to 100% before recording
+# helps avoid accidental low-volume recordings caused by per-app volume changes
+TRACKREC_FORCE_VOLUME="1"
 CFG
   chmod 600 "$CFG_FILE" || true
   created_cfg=1
   echo "Created defaults: $CFG_FILE"
 else
   echo "Defaults exist: $CFG_FILE"
+fi
+
+# Backfill newer config keys into existing configs without overwriting user values
+if ! grep -q '^TRACKREC_FORCE_VOLUME=' "$CFG_FILE" 2>/dev/null; then
+  cat >> "$CFG_FILE" <<'CFG'
+
+# force matched app stream volume to 100% before recording
+# helps avoid accidental low-volume recordings caused by per-app volume changes
+TRACKREC_FORCE_VOLUME="1"
+CFG
+  echo "Added missing default: TRACKREC_FORCE_VOLUME=\"1\""
 fi
 
 # Create output directory:
