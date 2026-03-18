@@ -46,8 +46,18 @@ EOD
 
 cat > "$LAUNCHER_DIR/spotify-record.sh" <<'EOD'
 #!/usr/bin/env bash
-set -euo pipefail
-exec "$HOME/.local/bin/trackrec-run" spotify
+set -uo pipefail
+
+echo "Starting trackrec recording for Spotify..."
+echo "Make sure Spotify is already playing before starting."
+echo
+
+"$HOME/.local/bin/trackrec-run" spotify
+rc=$?
+
+echo
+read -r -p "Press Enter to close..."
+exit "$rc"
 EOD
 
 cat > "$LAUNCHER_DIR/status-watch.sh" <<'EOD'
@@ -58,7 +68,7 @@ EOD
 
 cat > "$LAUNCHER_DIR/enrich-recordings.sh" <<'EOD'
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 "$HOME/.local/bin/trackrec-enrich" --write --set-year --set-date --set-genre
 
@@ -68,9 +78,21 @@ read -r -p "Press Enter to close..."
 exit "$rc"
 EOD
 
+cat > "$LAUNCHER_DIR/normalize-dj.sh" <<'EOD'
+#!/usr/bin/env bash
+set -uo pipefail
+
+"$HOME/.local/bin/trackrec-normalize" --write --preset dj --suffix DJ
+
+rc=$?
+echo
+read -r -p "Press Enter to close..."
+exit "$rc"
+EOD
+
 cat > "$LAUNCHER_DIR/stop.sh" <<'EOD'
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 "$HOME/.local/bin/trackrec-stop"
 
@@ -82,7 +104,7 @@ EOD
 
 cat > "$LAUNCHER_DIR/listen-on.sh" <<'EOD'
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 "$HOME/.local/bin/trackrec-listen-on"
 
@@ -94,7 +116,7 @@ EOD
 
 cat > "$LAUNCHER_DIR/listen-off.sh" <<'EOD'
 #!/usr/bin/env bash
-set -euo pipefail
+set -uo pipefail
 
 "$HOME/.local/bin/trackrec-listen-off"
 
@@ -108,6 +130,7 @@ chmod 755 \
   "$LAUNCHER_DIR/spotify-record.sh" \
   "$LAUNCHER_DIR/status-watch.sh" \
   "$LAUNCHER_DIR/enrich-recordings.sh" \
+  "$LAUNCHER_DIR/normalize-dj.sh" \
   "$LAUNCHER_DIR/stop.sh" \
   "$LAUNCHER_DIR/listen-on.sh" \
   "$LAUNCHER_DIR/listen-off.sh"
@@ -152,6 +175,18 @@ Terminal=true
 Categories=Trackrec;
 EOD
 
+cat > "$APP_DIR/trackrec-normalize-dj.desktop" <<EOD
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Trackrec Normalize DJ
+Comment=Normalize recordings with DJ preset and DJ suffix
+Exec=$LAUNCHER_DIR/normalize-dj.sh
+Icon=audio-x-generic
+Terminal=true
+Categories=Trackrec;
+EOD
+
 cat > "$APP_DIR/trackrec-stop.desktop" <<EOD
 [Desktop Entry]
 Version=1.0
@@ -192,6 +227,7 @@ chmod 644 \
   "$APP_DIR/trackrec-spotify-record.desktop" \
   "$APP_DIR/trackrec-status-watch.desktop" \
   "$APP_DIR/trackrec-enrich-recordings.desktop" \
+  "$APP_DIR/trackrec-normalize-dj.desktop" \
   "$APP_DIR/trackrec-stop.desktop" \
   "$APP_DIR/trackrec-listen-on.desktop" \
   "$APP_DIR/trackrec-listen-off.desktop" \
