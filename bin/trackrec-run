@@ -37,6 +37,7 @@ MIN_SECONDS="${TRACKREC_MIN_SECONDS:-30}"
 COMP="${TRACKREC_COMP:-5}"
 FORMAT="${TRACKREC_FORMAT:-flac}"
 MP3_BITRATE="${TRACKREC_MP3_BITRATE:-320k}"
+SAMPLE_RATE="${TRACKREC_SAMPLE_RATE:-44100}"
 LISTEN="${TRACKREC_LISTEN:-0}"
 
 FOLLOW="${TRACKREC_FOLLOW:-1}"
@@ -66,6 +67,11 @@ done
 case "$FORMAT" in
   flac|mp3) ;;
   *) echo "ERROR: unsupported format '$FORMAT' (use flac or mp3)" >&2; exit 2;;
+esac
+
+case "$SAMPLE_RATE" in
+  44100|48000) ;;
+  *) echo "ERROR: unsupported sample rate '$SAMPLE_RATE' (use 44100 or 48000)" >&2; exit 2;;
 esac
 
 for cmd in pactl awk sed grep tr head mkdir rm kill wait sleep; do
@@ -197,5 +203,6 @@ exec "$RECORDER" \
   --player "$PLAYER" \
   --format "$FORMAT" \
   --min-seconds "$MIN_SECONDS" \
+  --sample-rate "$SAMPLE_RATE" \
   "${extra_args[@]}" \
   "${dedupe_args[@]}"

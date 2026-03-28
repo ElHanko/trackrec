@@ -222,6 +222,7 @@ class Recorder:
         cmd = [
             "ffmpeg",
             "-hide_banner", "-loglevel", "error",
+            "-ar", str(self.sample_rate),
             "-f", "pulse", "-i", self.source,
         ]
 
@@ -330,6 +331,7 @@ def main():
     ap.add_argument("--mp3-bitrate", default="320k", help="MP3 bitrate, e.g. 192k, 256k, 320k")
     ap.add_argument("--min-seconds", type=int, default=30, help="Drop recordings shorter than this")
     ap.add_argument("--dedupe", action="store_true", help="Skip recording if SPOTIFY_URL was already kept before (stored in <out>/.spotify_index)")
+    ap.add_argument("--sample-rate", type=int, default=44100, choices=(44100, 48000), help="Capture sample rate in Hz")
     args = ap.parse_args()
 
     DBusGMainLoop(set_as_default=True)

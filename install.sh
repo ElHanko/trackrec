@@ -115,6 +115,69 @@ EOF
   chmod 755 "$wrapper"
 }
 
+detect_sample_rate() {
+  local rate=""
+
+  if command -v pw-metadata >/dev/null 2>&1; then
+    rate="$(pw-metadata -n settings 0 2>/dev/null | awk '
+      /clock.rate/ {
+        for (i=1; i<=NF; i++) {
+          if ($i ~ /^[0-9]+$/) {
+            print $i
+            exit
+          }
+        }
+      }'
+    )"
+  fi
+
+  case "$rate" in
+    44100|48000)
+      printf '%s\n' "$rate"
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+choose_sample_rate() {
+  local detected="$1"
+  local choice=""
+
+  echo
+  echo "Select trackrec sample rate:"
+
+  if [[ -n "$detected" ]]; then
+    echo "  1) detected system rate: $detected Hz"
+    echo "  2) 44100 Hz"
+    echo "  3) 48000 Hz"
+    read -r -p "Choice [1-3] (default: 1): " choice
+    case "${choice:-1}" in
+      1) printf '%s\n' "$detected" ;;
+      2) printf '%s\n' "44100" ;;
+      3) printf '%s\n' "48000" ;;
+      *)
+        echo "Invalid choice, using detected rate: $detected Hz" >&2
+        printf '%s\n' "$detected"
+        ;;
+    esac
+  else
+    echo "  1) 44100 Hz"
+    echo "  2) 48000 Hz"
+    read -r -p "Choice [1-2] (default: 1): " choice
+    case "${choice:-1}" in
+      1) printf '%s\n' "44100" ;;
+      2) printf '%s\n' "48000" ;;
+      *)
+        echo "Invalid choice, using 44100 Hz" >&2
+        printf '%s\n' "44100"
+        ;;
+    esac
+  fi
+}
+
 for name in "${ALL_TOOLS[@]}"; do
   install_tool "$name"
 done
@@ -155,8 +218,37 @@ echo "Config directory: $CFG_DIR"
 
 created_cfg=0
 
+DETECTED_SAMPLE_RATE=""
+INITIAL_SAMPLE_RATE="44100"
+
+if DETECTED_SAMPLE_RATE="$(detect_sample_rate)"; then
+  :
+else
+  DETECTED_SAMPLE_RATE=""
+fi
+
+NEED_SAMPLE_RATE_CHOICE=0
+
 if [[ ! -f "$CFG_FILE" ]]; then
-  cat > "$CFG_FILE" <<'CFG'
+  NEED_SAMPLE_RATE_CHOICE=1
+elif ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
+  NEED_SAMPLE_RATE_CHOICE=1
+fi
+
+if [[ "$NEED_SAMPLE_RATE_CHOICE" -eq 1 ]]; then
+  if [[ -t 0 && -t 1 ]]; then
+    INITIAL_SAMPLE_RATE="$(choose_sample_rate "$DETECTED_SAMPLE_RATE")"
+  else
+    if [[ "$DETECTED_SAMPLE_RATE" == "44100" || "$DETECTED_SAMPLE_RATE" == "48000" ]]; then
+      INITIAL_SAMPLE_RATE="$DETECTED_SAMPLE_RATE"
+    fi
+  fi
+
+  echo "Using initial sample rate: ${INITIAL_SAMPLE_RATE} Hz"
+fi
+
+if [[ ! -f "$CFG_FILE" ]]; then
+  cat > "$CFG_FILE" <<CFG
 # trackrec defaults (loaded by trackrec-run)
 # CLI flags always override these values.
 
@@ -171,6 +263,8 @@ TRACKREC_COMP="5"
 
 # MP3 bitrate (only used with TRACKREC_FORMAT="mp3")
 TRACKREC_MP3_BITRATE="320k"
+
+TRACKREC_SAMPLE_RATE="$INITIAL_SAMPLE_RATE"
 
 TRACKREC_LISTEN="0"
 
@@ -200,6 +294,16 @@ if ! grep -q '^TRACKREC_FORCE_VOLUME=' "$CFG_FILE" 2>/dev/null; then
 TRACKREC_FORCE_VOLUME="1"
 CFG
   echo "Added missing default: TRACKREC_FORCE_VOLUME=\"1\""
+fi
+
+if ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
+  cat >> "$CFG_FILE" <<CFG
+
+# capture sample rate in Hz
+# valid values: 44100 or 48000
+TRACKREC_SAMPLE_RATE="$INITIAL_SAMPLE_RATE"
+CFG
+  echo "Added missing default: TRACKREC_SAMPLE_RATE=\"$INITIAL_SAMPLE_RATE\""
 fi
 
 # Create output directory:
