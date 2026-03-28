@@ -41,7 +41,7 @@ def to_int_str(v) -> str:
 
 
 class Recorder:
-    def __init__(self, out_dir, source, preferred_player, comp_level, min_seconds, dedupe, out_format, mp3_bitrate):
+    def __init__(self, out_dir, source, preferred_player, comp_level, min_seconds, dedupe, out_format, mp3_bitrate, sample_rate):
         self.out_dir = out_dir
         self.source = source
         self.preferred_player = preferred_player
@@ -50,6 +50,7 @@ class Recorder:
         self.dedupe = dedupe
         self.out_format = out_format
         self.mp3_bitrate = mp3_bitrate
+        self.sample_rate = sample_rate
 
         self.bus = dbus.SessionBus()
         self.player_name = None
@@ -345,6 +346,7 @@ def main():
         args.dedupe,
         args.format,
         args.mp3_bitrate,
+        args.sample_rate,
     )
     if not r.connect_player():
         raise SystemExit(2)
