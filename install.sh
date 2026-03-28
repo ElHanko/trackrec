@@ -119,15 +119,10 @@ detect_sample_rate() {
   local rate=""
 
   if command -v pw-metadata >/dev/null 2>&1; then
-    rate="$(pw-metadata -n settings 0 2>/dev/null | awk '
-      /clock.rate/ {
-        for (i=1; i<=NF; i++) {
-          if ($i ~ /^[0-9]+$/) {
-            print $i
-            exit
-          }
-        }
-      }'
+    rate="$(
+      pw-metadata -n settings 0 2>/dev/null \
+        | sed -n "s/.*key:'clock\.rate' value:'\([0-9][0-9]*\)'.*/\1/p" \
+        | head -n1
     )"
   fi
 
@@ -146,26 +141,39 @@ choose_sample_rate() {
   local detected="$1"
   local choice=""
 
-  echo
-  echo "Select trackrec sample rate:"
+  echo >&2
+  echo "Select trackrec sample rate:" >&2
 
-  if [[ -n "$detected" ]]; then
-    echo "  1) detected system rate: $detected Hz"
-    echo "  2) 44100 Hz"
-    echo "  3) 48000 Hz"
-    read -r -p "Choice [1-3] (default: 1): " choice
+  if [[ "$detected" == "44100" ]]; then
+    echo "  1) use detected system rate: 44100 Hz (recommended)" >&2
+    echo "  2) use 48000 Hz instead" >&2
+    read -r -p "Choice [1-2] (default: 1): " choice
     case "${choice:-1}" in
-      1) printf '%s\n' "$detected" ;;
-      2) printf '%s\n' "44100" ;;
-      3) printf '%s\n' "48000" ;;
+      1) printf '%s\n' "44100" ;;
+      2) printf '%s\n' "48000" ;;
       *)
-        echo "Invalid choice, using detected rate: $detected Hz" >&2
-        printf '%s\n' "$detected"
+        echo "Invalid choice, using detected rate: 44100 Hz" >&2
+        printf '%s\n' "44100"
         ;;
     esac
+
+  elif [[ "$detected" == "48000" ]]; then
+    echo "  1) use detected system rate: 48000 Hz (recommended)" >&2
+    echo "  2) use 44100 Hz instead" >&2
+    read -r -p "Choice [1-2] (default: 1): " choice
+    case "${choice:-1}" in
+      1) printf '%s\n' "48000" ;;
+      2) printf '%s\n' "44100" ;;
+      *)
+        echo "Invalid choice, using detected rate: 48000 Hz" >&2
+        printf '%s\n' "48000"
+        ;;
+    esac
+
   else
-    echo "  1) 44100 Hz"
-    echo "  2) 48000 Hz"
+    echo "Could not detect PipeWire sample rate automatically." >&2
+    echo "  1) 44100 Hz" >&2
+    echo "  2) 48000 Hz" >&2
     read -r -p "Choice [1-2] (default: 1): " choice
     case "${choice:-1}" in
       1) printf '%s\n' "44100" ;;
