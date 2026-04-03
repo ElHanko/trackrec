@@ -66,6 +66,12 @@ set -euo pipefail
 exec "$HOME/.local/bin/trackrec-status" --watch
 EOD
 
+cat > "$LAUNCHER_DIR/tui.sh" <<'EOD'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$HOME/.local/bin/trackrec-tui"
+EOD
+
 cat > "$LAUNCHER_DIR/enrich-recordings.sh" <<'EOD'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -129,6 +135,7 @@ EOD
 chmod 755 \
   "$LAUNCHER_DIR/spotify-record.sh" \
   "$LAUNCHER_DIR/status-watch.sh" \
+  "$LAUNCHER_DIR/tui.sh" \
   "$LAUNCHER_DIR/enrich-recordings.sh" \
   "$LAUNCHER_DIR/normalize-dj.sh" \
   "$LAUNCHER_DIR/stop.sh" \
@@ -159,6 +166,18 @@ Name=Trackrec Status Watch
 Comment=Watch live trackrec status
 Exec=$LAUNCHER_DIR/status-watch.sh
 Icon=utilities-system-monitor
+Terminal=true
+Categories=Trackrec;
+EOD
+
+cat > "$APP_DIR/trackrec-tui.desktop" <<EOD
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Trackrec TUI
+Comment=Open the trackrec terminal interface
+Exec=$LAUNCHER_DIR/tui.sh
+Icon=utilities-terminal
 Terminal=true
 Categories=Trackrec;
 EOD
@@ -226,6 +245,7 @@ EOD
 chmod 644 \
   "$APP_DIR/trackrec-spotify-record.desktop" \
   "$APP_DIR/trackrec-status-watch.desktop" \
+  "$APP_DIR/trackrec-tui.desktop" \
   "$APP_DIR/trackrec-enrich-recordings.desktop" \
   "$APP_DIR/trackrec-normalize-dj.desktop" \
   "$APP_DIR/trackrec-stop.desktop" \
