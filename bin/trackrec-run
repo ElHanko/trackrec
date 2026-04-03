@@ -2,11 +2,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 TRACKREC_SETUP="$SCRIPT_DIR/trackrec-setup"
 TRACKREC_LISTEN_ON="$SCRIPT_DIR/trackrec-listen-on"
 TRACKREC_LISTEN_OFF="$SCRIPT_DIR/trackrec-listen-off"
 RECORDER="$SCRIPT_DIR/trackrec-recorder.py"
+VENV_PY="$PROJECT_DIR/.venv/bin/python"
 
 pattern="${1:-}"
 shift || true
@@ -112,20 +114,21 @@ mkdir -p "$STATE_DIR"
 
 cleanup() {
   set +e
+
   [[ "$LISTEN" -eq 1 ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1
 
   if [[ -n "${FOLLOW_PID:-}" ]]; then
-    kill "$FOLLOW_PID" >/dev/null 2>&1
-    wait "$FOLLOW_PID" >/dev/null 2>&1
+    kill "$FOLLOW_PID" >/dev/null 2>&1 || true
+    wait "$FOLLOW_PID" >/dev/null 2>&1 || true
   fi
 
   if [[ -s "$MAP_FILE" ]]; then
     while IFS=$'\t' read -r sid orig_sink; do
-      pactl move-sink-input "$sid" "$orig_sink" >/dev/null 2>&1
+      pactl move-sink-input "$sid" "$orig_sink" >/dev/null 2>&1 || true
     done < "$MAP_FILE"
   fi
 
-  rm -rf "$STATE_DIR" >/dev/null 2>&1
+  rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT INT TERM
 
@@ -135,14 +138,26 @@ pat_lc="$(echo "$pattern" | tr '[:upper:]' '[:lower:]')"
 
 match_and_move_new_streams() {
   local ids id block orig_sink app bin media hay
+
+  [[ -d "$STATE_DIR" ]] || return 0
+  [[ -e "$SEEN_FILE" ]] || return 0
+  [[ -e "$MAP_FILE" ]] || return 0
+
   ids="$(pactl list short sink-inputs | awk '{print $1}' || true)"
+  [[ -z "$ids" ]] && return 0
 
   for id in $ids; do
-    grep -qx "$id" "$SEEN_FILE" && continue
+    [[ -d "$STATE_DIR" ]] || return 0
+    [[ -e "$SEEN_FILE" ]] || return 0
+    [[ -e "$MAP_FILE" ]] || return 0
+
+    if grep -qx "$id" "$SEEN_FILE" 2>/dev/null; then
+      continue
+    fi
 
     block="$(pactl list sink-inputs | sed -n "/Sink Input #$id\b/,/^$/p")"
     orig_sink="$(echo "$block" | sed -n 's/^[[:space:]]*Sink: \([0-9]\+\).*/\1/p' | head -n1)"
-    [[ -z "$orig_sink" ]] && { echo "$id" >> "$SEEN_FILE"; continue; }
+    [[ -z "$orig_sink" ]] && { [[ -e "$SEEN_FILE" ]] && echo "$id" >> "$SEEN_FILE"; continue; }
 
     app="$(echo "$block" | sed -n 's/.*application\.name = "\(.*\)".*/\1/p')"
     bin="$(echo "$block" | sed -n 's/.*application\.process\.binary = "\(.*\)".*/\1/p')"
@@ -152,12 +167,14 @@ match_and_move_new_streams() {
 
     if echo "$hay" | grep -qF "$pat_lc"; then
       if pactl move-sink-input "$id" rec >/dev/null 2>&1; then
-        [[ "$FORCE_VOLUME" -eq 1 ]] && pactl set-sink-input-volume "$id" 100%
-        printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
+        [[ "$FORCE_VOLUME" -eq 1 ]] && pactl set-sink-input-volume "$id" 100% >/dev/null 2>&1 || true
+        [[ -e "$MAP_FILE" ]] && printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
+      else
+        echo "Warning: failed to move sink-input #$id to rec" >&2
       fi
     fi
 
-    echo "$id" >> "$SEEN_FILE"
+    [[ -e "$SEEN_FILE" ]] && echo "$id" >> "$SEEN_FILE"
   done
 }
 
@@ -169,7 +186,7 @@ mkdir -p "$OUTDIR"
 
 if [[ "$FOLLOW" -eq 1 ]]; then
   (
-    while true; do
+    while [[ -d "$STATE_DIR" ]]; do
       match_and_move_new_streams
       sleep "$FOLLOW_INTERVAL"
     done
@@ -188,14 +205,28 @@ extra_args=()
 dedupe_args=()
 [[ "$DEDUPE" -eq 1 ]] && dedupe_args+=(--dedupe)
 
-exec "$RECORDER" \
-  --source rec.monitor \
-  --out "$OUTDIR" \
-  --player "$PLAYER" \
-  --format "$FORMAT" \
-  --min-seconds "$MIN_SECONDS" \
-  --sample-rate "$SAMPLE_RATE" \
-  --autoskip "$AUTOSKIP" \
-  --autoskip-delay "$AUTOSKIP_DELAY" \
-  "${extra_args[@]}" \
-  "${dedupe_args[@]}"
+if [[ -x "$VENV_PY" ]]; then
+  exec "$VENV_PY" "$RECORDER" \
+    --source rec.monitor \
+    --out "$OUTDIR" \
+    --player "$PLAYER" \
+    --format "$FORMAT" \
+    --min-seconds "$MIN_SECONDS" \
+    --sample-rate "$SAMPLE_RATE" \
+    --autoskip "$AUTOSKIP" \
+    --autoskip-delay "$AUTOSKIP_DELAY" \
+    "${extra_args[@]}" \
+    "${dedupe_args[@]}"
+else
+  exec "$RECORDER" \
+    --source rec.monitor \
+    --out "$OUTDIR" \
+    --player "$PLAYER" \
+    --format "$FORMAT" \
+    --min-seconds "$MIN_SECONDS" \
+    --sample-rate "$SAMPLE_RATE" \
+    --autoskip "$AUTOSKIP" \
+    --autoskip-delay "$AUTOSKIP_DELAY" \
+    "${extra_args[@]}" \
+    "${dedupe_args[@]}"
+fi

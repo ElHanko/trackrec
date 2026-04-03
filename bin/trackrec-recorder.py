@@ -100,8 +100,22 @@ class Recorder:
 
     def _write_status(self, **fields):
         try:
+            data = {}
+
+            if os.path.exists(self.status_file):
+                with open(self.status_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.rstrip("\n")
+                        if "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        data[k] = v
+
+            for k, v in fields.items():
+                data[k] = str(v)
+
             with open(self.status_file, "w", encoding="utf-8") as f:
-                for k, v in fields.items():
+                for k, v in data.items():
                     f.write(f"{k}={v}\n")
         except Exception:
             pass
@@ -190,6 +204,16 @@ class Recorder:
             if not self.autoskip_pending:
                 return False
 
+            # do not skip if we already moved on to another track
+            if self.current_track_id != self.autoskip_track_id:
+                self._clear_autoskip()
+                return False
+
+            # do not skip if a new recording is already running
+            if self.proc:
+                self._clear_autoskip()
+                return False
+
             print("AUTOSKIP -> Next")
             self.player.Next()
         except Exception as e:
@@ -201,6 +225,9 @@ class Recorder:
                 ARTIST=artist,
                 TITLE=title,
                 SPOTIFY_URL=self.current_url or "",
+                LAST_RESULT="SKIP",
+                LAST_DURATION="-",
+                LAST_FILE="-",
                 AUTOSKIP=("1" if self.autoskip else "0"),
                 AUTOSKIP_DELAY=str(self.autoskip_delay),
                 AUTOSKIP_PENDING="0",
@@ -298,6 +325,9 @@ class Recorder:
                 ARTIST=artist,
                 TITLE=title,
                 SPOTIFY_URL=url,
+                LAST_RESULT="SKIP",
+                LAST_DURATION="-",
+                LAST_FILE="-",
                 AUTOSKIP=("1" if self.autoskip else "0"),
                 AUTOSKIP_DELAY=str(self.autoskip_delay),
                 AUTOSKIP_PENDING="0",

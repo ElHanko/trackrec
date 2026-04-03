@@ -17,7 +17,7 @@ Installs trackrec into ~/.local/bin with real files stored under:
   ~/.local/bin/trackrec/
 
 Options:
---with-enrich     also install optional enrichment support for trackrec-enrich
+  --with-enrich   also install optional enrichment support for trackrec-enrich
                   and create ~/.config/trackrec/.env template.
   --link          link files from the repository instead of copying them
                   (useful for development)
@@ -37,6 +37,9 @@ BIN_DST="$HOME/.local/bin"
 APP_DIR="$BIN_DST/trackrec"
 PROFILE="$HOME/.profile"
 
+VENV_DIR="$PROJECT_DIR/.venv"
+USE_PROJECT_VENV=0
+
 CFG_DIR="$HOME/.config/trackrec"
 CFG_FILE="$CFG_DIR/trackrec.conf"
 ENV_FILE="$CFG_DIR/.env"
@@ -45,6 +48,37 @@ ENV_FILE="$CFG_DIR/.env"
 
 mkdir -p "$BIN_DST"
 mkdir -p "$APP_DIR"
+
+if [[ "$LINK_MODE" -eq 1 ]]; then
+  if [[ -t 0 && -t 1 ]]; then
+    echo
+    read -r -p "Use project virtual environment at $VENV_DIR for Python tools? [Y/n]: " reply
+    case "${reply:-Y}" in
+      n|N) USE_PROJECT_VENV=0 ;;
+      *) USE_PROJECT_VENV=1 ;;
+    esac
+  fi
+fi
+
+if [[ "$LINK_MODE" -eq 1 && "$USE_PROJECT_VENV" -eq 1 ]]; then
+  command -v python3 >/dev/null 2>&1 || { echo "ERROR: missing python3" >&2; exit 1; }
+
+  if [[ ! -d "$VENV_DIR" ]]; then
+    echo "Creating virtual environment in $VENV_DIR ..."
+    python3 -m venv "$VENV_DIR"
+  else
+    echo "Virtual environment exists: $VENV_DIR"
+  fi
+
+  if [[ ! -x "$VENV_DIR/bin/python" ]]; then
+    echo "ERROR: missing venv python: $VENV_DIR/bin/python" >&2
+    exit 1
+  fi
+
+  echo "Installing/updating Textual in project venv ..."
+  "$VENV_DIR/bin/python" -m pip install --upgrade pip >/dev/null
+  "$VENV_DIR/bin/python" -m pip install textual
+fi
 
 # Core tools (always installed)
 CORE_TOOLS=(
@@ -57,8 +91,10 @@ CORE_TOOLS=(
   trackrec-setup
   trackrec-status
   trackrec-stop
+  trackrec-tui
   trackrec-uninstall
 )
+
 WRAPPER_TOOLS=(
   trackrec-run
   trackrec-status
@@ -68,8 +104,10 @@ WRAPPER_TOOLS=(
   trackrec-listen-on
   trackrec-listen-off
   trackrec-normalize
+  trackrec-tui
   trackrec-uninstall
 )
+
 # Optional tools (installed only with --with-enrich)
 ENRICH_TOOLS=(
   trackrec-enrich
@@ -110,7 +148,25 @@ create_wrapper() {
 
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
-exec "\$HOME/.local/bin/trackrec/$name" "\$@"
+set -euo pipefail
+
+APP_DIR="\$HOME/.local/bin/trackrec"
+VENV_PY="$VENV_DIR/bin/python"
+USE_PROJECT_VENV="$USE_PROJECT_VENV"
+LINK_MODE="$LINK_MODE"
+
+case "$name" in
+  trackrec-tui)
+    if [[ "\$LINK_MODE" -eq 1 && "\$USE_PROJECT_VENV" -eq 1 && -x "\$VENV_PY" ]]; then
+      exec "\$VENV_PY" "\$APP_DIR/$name" "\$@"
+    else
+      exec python3 "\$APP_DIR/$name" "\$@"
+    fi
+    ;;
+  *)
+    exec "\$APP_DIR/$name" "\$@"
+    ;;
+esac
 EOF
   chmod 755 "$wrapper"
 }
@@ -275,7 +331,6 @@ TRACKREC_MP3_BITRATE="320k"
 TRACKREC_SAMPLE_RATE="$INITIAL_SAMPLE_RATE"
 
 TRACKREC_AUTOSKIP="0"
-
 TRACKREC_AUTOSKIP_DELAY="5"
 
 TRACKREC_LISTEN="0"
@@ -305,7 +360,7 @@ if ! grep -q '^TRACKREC_FORCE_VOLUME=' "$CFG_FILE" 2>/dev/null; then
 # helps avoid accidental low-volume recordings caused by per-app volume changes
 TRACKREC_FORCE_VOLUME="1"
 CFG
-  echo "Added missing default: TRACKREC_FORCE_VOLUME=\"1\""
+  echo 'Added missing default: TRACKREC_FORCE_VOLUME="1"'
 fi
 
 if ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
@@ -334,6 +389,15 @@ if ! grep -q '^TRACKREC_AUTOSKIP_DELAY=' "$CFG_FILE" 2>/dev/null; then
 TRACKREC_AUTOSKIP_DELAY="5"
 CFG
   echo 'Added missing default: TRACKREC_AUTOSKIP_DELAY="5"'
+fi
+
+if ! grep -q '^TRACKREC_FORMAT=' "$CFG_FILE" 2>/dev/null; then
+  cat >> "$CFG_FILE" <<'CFG'
+
+# output format: flac or mp3
+TRACKREC_FORMAT="flac"
+CFG
+  echo 'Added missing default: TRACKREC_FORMAT="flac"'
 fi
 
 # Create output directory:
@@ -365,7 +429,25 @@ ENV
   else
     echo "Enrichment .env exists: $ENV_FILE"
   fi
+fi
 
+if [[ "$LINK_MODE" -eq 1 && "$USE_PROJECT_VENV" -eq 1 ]]; then
+  cat <<NOTE
+
+trackrec-tui is configured to use the project virtual environment:
+  $VENV_DIR
+
+NOTE
+else
+  cat <<'NOTE'
+
+trackrec-tui uses system python in this install mode.
+Make sure required Python packages are installed manually.
+
+NOTE
+fi
+
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
   cat <<'NOTE'
 
 Enrichment is OPTIONAL and not part of the recording pipeline.
@@ -398,6 +480,7 @@ echo "Done."
 echo "Open a new login shell (or run: source ~/.profile) then test:"
 echo "  trackrec-status"
 echo "  trackrec-run spotify"
+echo "  trackrec-tui"
 echo
 echo "Installed files:"
 echo "  $APP_DIR"

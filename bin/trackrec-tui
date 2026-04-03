@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import asyncio
+import os
+import time
+from pathlib import Path
+from typing import Optional
+
+from textual.app import App, ComposeResult
+from textual.widgets import Footer, Header, Static
+
+CONFIG_FILE = Path.home() / ".config" / "trackrec" / "trackrec.conf"
+STATUS_FILE = Path(f"/run/user/{os.getuid()}/trackrec-run/recorder.status")
+
+
+class TrackrecTUI(App):
+    TITLE = "trackrec"
+
+    BINDINGS = [
+        ("s", "start", "Start"),
+        ("x", "stop", "Stop"),
+        ("r", "reload", "Reload"),
+        ("l", "clear", "Clear"),
+        ("q", "quit", "Quit"),
+    ]
+
+    process: Optional[asyncio.subprocess.Process] = None
+    read_output_task: Optional[asyncio.Task] = None
+    owns_process: bool = False
+    log_lines: list[str] = []
+    status: dict[str, str] = {}
+    config: dict[str, str] = {}
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        yield Static(id="main")
+        yield Footer()
+
+    async def on_mount(self) -> None:
+        self.load_config()
+        self.set_interval(1, self.refresh_view)
+        self.refresh_view()
+
+    async def on_unmount(self) -> None:
+        if self.read_output_task and not self.read_output_task.done():
+            self.read_output_task.cancel()
+
+    def load_config(self) -> None:
+        self.config = {}
+        if CONFIG_FILE.exists():
+            for raw_line in CONFIG_FILE.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                self.config[key.strip()] = value.strip().strip('"').strip("'")
+
+    def read_status(self) -> None:
+        data: dict[str, str] = {}
+        if STATUS_FILE.exists():
+            for raw_line in STATUS_FILE.read_text(encoding="utf-8").splitlines():
+                line = raw_line.strip()
+                if not line or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                data[key.strip()] = value.strip()
+        self.status = data
+
+    def on_off(self, value: Optional[str]) -> str:
+        return "ON" if str(value or "0") == "1" else "OFF"
+
+    def truncate(self, value: str, max_len: int = 70) -> str:
+        value = value or "-"
+        return value if len(value) <= max_len else value[: max_len - 3] + "..."
+
+    def format_elapsed(self, started_at: Optional[str]) -> str:
+        if not started_at or not started_at.isdigit():
+            return "-"
+        delta = max(0, int(time.time()) - int(started_at))
+        hours = delta // 3600
+        minutes = (delta % 3600) // 60
+        seconds = delta % 60
+        if hours > 0:
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def format_line(self) -> str:
+        fmt = self.config.get("TRACKREC_FORMAT", "-")
+        sample_rate = self.config.get("TRACKREC_SAMPLE_RATE", "-")
+        if fmt != "-" and sample_rate != "-":
+            return f"{fmt} @ {sample_rate} Hz"
+        return "-"
+
+    def autoskip_line(self) -> str:
+        enabled = self.on_off(self.status.get("AUTOSKIP") or self.config.get("TRACKREC_AUTOSKIP"))
+        delay = self.status.get("AUTOSKIP_DELAY") or self.config.get("TRACKREC_AUTOSKIP_DELAY") or "-"
+        pending = self.status.get("AUTOSKIP_PENDING", "0") == "1"
+
+        if enabled == "OFF":
+            return "OFF"
+        if pending:
+            return f"ON ({delay}s, pending)"
+        return f"ON ({delay}s)"
+
+    def control_line(self) -> str:
+        return "OWNED" if self.owns_process else "EXTERNAL"
+
+    def render_view(self) -> str:
+        s = self.status
+        c = self.config
+        lines: list[str] = []
+
+        lines.append(f"STATE     {s.get('STATE', 'idle').upper()}")
+        lines.append(f"PLAYER    {c.get('TRACKREC_PLAYER', 'spotify')}")
+        lines.append("SOURCE    rec.monitor")
+        lines.append(f"FORMAT    {self.format_line()}")
+        lines.append(f"DEDUPE    {self.on_off(c.get('TRACKREC_DEDUPE'))}")
+        lines.append(f"AUTOSKIP  {self.autoskip_line()}")
+        lines.append(f"CONTROL   {self.control_line()}")
+        lines.append(f"OUTDIR    {self.truncate(c.get('TRACKREC_OUTDIR', '-'), 58)}")
+        lines.append("")
+
+        state = s.get("STATE", "").lower()
+        artist = s.get("ARTIST", "").strip()
+        title = s.get("TITLE", "").strip()
+        now_line = f"{artist} - {title}".strip(" -")
+
+        if state in {"recording", "skipped"} and now_line:
+            lines.append(f"NOW       {self.truncate(now_line, 58)}")
+
+        file_value = s.get("FILE", "").strip()
+        if file_value:
+            lines.append(f"FILE      {self.truncate(file_value, 58)}")
+
+        elapsed = self.format_elapsed(s.get("STARTED_AT"))
+        if state == "recording" and elapsed != "-":
+            lines.append(f"ELAPSED   {elapsed}")
+
+        lines.append("")
+
+        last_result = s.get("LAST_RESULT", "").strip()
+        last_duration = s.get("LAST_DURATION", "").strip()
+        last_file = s.get("LAST_FILE", "").strip()
+
+        if last_result or last_duration or last_file:
+            duration_part = f"{last_duration}s" if last_duration else "-"
+            file_part = self.truncate(last_file, 40) if last_file else "-"
+            lines.append(f"LAST      {last_result or '-'} | {duration_part} | {file_part}")
+        else:
+            lines.append("LAST      (none)")
+
+        lines.append("")
+        lines.append("LOG")
+        lines.append("-" * 70)
+
+        if not self.log_lines:
+            lines.append("(no live output in this session)")
+        else:
+            for line in self.log_lines[-10:]:
+                lines.append(self.truncate(line, 70))
+
+        lines.append("-" * 70)
+        lines.append("[s] start   [x] stop   [r] reload   [l] clear   [q] quit")
+
+        return "\n".join(lines)
+
+    def refresh_view(self) -> None:
+        self.read_status()
+        self.query_one("#main", Static).update(self.render_view())
+
+    def log_line(self, msg: str) -> None:
+        self.log_lines.append(msg)
+        self.refresh_view()
+
+    async def action_start(self) -> None:
+        if self.process and self.process.returncode is None:
+            self.log_line("already running")
+            return
+
+        player = self.config.get("TRACKREC_PLAYER", "spotify")
+        cmd = ["trackrec-run", player]
+        self.log_line(f"$ {' '.join(cmd)}")
+
+        self.process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        self.owns_process = True
+        self.read_output_task = asyncio.create_task(self.read_output())
+
+    async def read_output(self) -> None:
+        if not self.process or not self.process.stdout:
+            return
+
+        try:
+            while True:
+                line = await self.process.stdout.readline()
+                if not line:
+                    break
+                self.log_line(line.decode(errors="replace").strip())
+        except asyncio.CancelledError:
+            return
+        finally:
+            if self.process and self.process.returncode is not None:
+                self.log_line(f"trackrec-run exited with code {self.process.returncode}")
+                self.process = None
+                self.owns_process = False
+
+    async def action_stop(self) -> None:
+        self.log_line("$ trackrec-stop")
+        proc = await asyncio.create_subprocess_exec(
+            "trackrec-stop",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+            if stdout:
+                for line in stdout.decode(errors="replace").splitlines():
+                    self.log_line(line.strip())
+        except asyncio.TimeoutError:
+            self.log_line("trackrec-stop timed out")
+        self.owns_process = False
+
+    async def action_reload(self) -> None:
+        self.load_config()
+        self.log_line("config reloaded")
+        self.refresh_view()
+
+    async def action_clear(self) -> None:
+        self.log_lines.clear()
+        self.refresh_view()
+
+    async def action_quit(self) -> None:
+        if self.owns_process:
+            self.log_line("stopping owned trackrec-run before exit...")
+            try:
+                proc = await asyncio.create_subprocess_exec(
+                    "trackrec-stop",
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+                if stdout:
+                    for line in stdout.decode(errors="replace").splitlines():
+                        self.log_line(line.strip())
+            except asyncio.TimeoutError:
+                self.log_line("trackrec-stop timed out on exit")
+            except Exception as e:
+                self.log_line(f"stop on exit failed: {e}")
+
+            self.owns_process = False
+
+        if self.read_output_task and not self.read_output_task.done():
+            self.read_output_task.cancel()
+            try:
+                await asyncio.wait_for(self.read_output_task, timeout=1)
+            except asyncio.TimeoutError:
+                self.log_line("read_output task did not stop cleanly")
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                self.log_line(f"read_output cleanup failed: {e}")
+
+        self.exit()
+
+
+if __name__ == "__main__":
+    TrackrecTUI().run()
