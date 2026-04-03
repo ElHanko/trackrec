@@ -20,3 +20,8 @@ recordings/
 *.swp
 .env
 .env.*
+
+# python virtual environments
+.venv/
+venv/
+env/
