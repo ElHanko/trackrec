@@ -12,25 +12,22 @@ pattern="${1:-}"
 shift || true
 
 if [[ -z "$pattern" ]]; then
-  echo "Usage: trackrec-run <pattern> [--listen] [--out <dir>] [--min-seconds <n>] [--comp <0-8>] [--format <flac|mp3>] [--mp3-bitrate <rate>] [--player <name>] [--no-follow] [--follow-interval <sec>] [--no-dedupe] [--force-volume] [--no-force-volume]"
+  echo "Usage: trackrec-run <pattern> [...]"
   exit 1
 fi
 
-# ---- Load defaults from config (optional) ----
+# ---- Load config ----
 CFG_FILE="$HOME/.config/trackrec/trackrec.conf"
 if [[ -f "$CFG_FILE" ]]; then
   while IFS= read -r line || [[ -n "$line" ]]; do
     line="${line#"${line%%[![:space:]]*}"}"
     line="${line%"${line##*[![:space:]]}"}"
-    [[ -z "$line" ]] && continue
-    [[ "$line" =~ ^# ]] && continue
-    if [[ "$line" =~ ^TRACKREC_[A-Z0-9_]+= ]]; then
-      eval "$line"
-    fi
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    [[ "$line" =~ ^TRACKREC_[A-Z0-9_]+= ]] && eval "$line"
   done < "$CFG_FILE"
 fi
 
-# ---- Defaults (config provides defaults; CLI flags override) ----
+# ---- Defaults ----
 PLAYER="$pattern"
 OUTDIR="${TRACKREC_OUTDIR:-$HOME/recordings}"
 MIN_SECONDS="${TRACKREC_MIN_SECONDS:-30}"
@@ -39,13 +36,15 @@ FORMAT="${TRACKREC_FORMAT:-flac}"
 MP3_BITRATE="${TRACKREC_MP3_BITRATE:-320k}"
 SAMPLE_RATE="${TRACKREC_SAMPLE_RATE:-44100}"
 LISTEN="${TRACKREC_LISTEN:-0}"
+AUTOSKIP="${TRACKREC_AUTOSKIP:-0}"
+AUTOSKIP_DELAY="${TRACKREC_AUTOSKIP_DELAY:-5}"
 
 FOLLOW="${TRACKREC_FOLLOW:-1}"
 FOLLOW_INTERVAL="${TRACKREC_FOLLOW_INTERVAL:-1}"
-
-DEDUPE="${TRACKREC_DEDUPE:-1}"   # default ON
+DEDUPE="${TRACKREC_DEDUPE:-1}"
 FORCE_VOLUME="${TRACKREC_FORCE_VOLUME:-1}"
 
+# ---- CLI overrides ----
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --player) PLAYER="${2:-$PLAYER}"; shift 2;;
@@ -60,53 +59,73 @@ while [[ $# -gt 0 ]]; do
     --no-dedupe) DEDUPE=0; shift;;
     --force-volume) FORCE_VOLUME=1; shift;;
     --no-force-volume) FORCE_VOLUME=0; shift;;
+    --autoskip) AUTOSKIP="${2:-$AUTOSKIP}"; shift 2;;
+    --autoskip-delay) AUTOSKIP_DELAY="${2:-$AUTOSKIP_DELAY}"; shift 2;;
     *) echo "Unknown option: $1"; exit 2;;
   esac
 done
 
+# ---- Validation ----
 case "$FORMAT" in
   flac|mp3) ;;
-  *) echo "ERROR: unsupported format '$FORMAT' (use flac or mp3)" >&2; exit 2;;
+  *) echo "ERROR: unsupported format '$FORMAT'" >&2; exit 2;;
 esac
 
 case "$SAMPLE_RATE" in
   44100|48000) ;;
-  *) echo "ERROR: unsupported sample rate '$SAMPLE_RATE' (use 44100 or 48000)" >&2; exit 2;;
+  *) echo "ERROR: unsupported sample rate '$SAMPLE_RATE'" >&2; exit 2;;
 esac
 
+case "$AUTOSKIP" in
+  0|1) ;;
+  *) echo "ERROR: invalid autoskip '$AUTOSKIP'" >&2; exit 2;;
+esac
+
+case "$AUTOSKIP_DELAY" in
+  *[!0-9]*)
+    echo "ERROR: invalid autoskip delay '$AUTOSKIP_DELAY'" >&2
+    exit 2
+    ;;
+esac
+
+if [[ "$AUTOSKIP" -eq 1 && "$DEDUPE" -ne 1 ]]; then
+  echo "Warning: autoskip enabled but dedupe is OFF (no effect)" >&2
+fi
+
+# ---- Checks ----
 for cmd in pactl awk sed grep tr head mkdir rm kill wait sleep; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Missing command: $cmd"; exit 3; }
 done
 
-[[ -x "$TRACKREC_SETUP" ]] || { echo "Missing internal script: $TRACKREC_SETUP" >&2; exit 3; }
-[[ -x "$TRACKREC_LISTEN_ON" ]] || { echo "Missing internal script: $TRACKREC_LISTEN_ON" >&2; exit 3; }
-[[ -x "$TRACKREC_LISTEN_OFF" ]] || { echo "Missing internal script: $TRACKREC_LISTEN_OFF" >&2; exit 3; }
-[[ -x "$RECORDER" ]] || { echo "Missing internal recorder: $RECORDER" >&2; exit 3; }
+[[ -x "$TRACKREC_SETUP" ]] || { echo "Missing: $TRACKREC_SETUP"; exit 3; }
+[[ -x "$TRACKREC_LISTEN_ON" ]] || { echo "Missing: $TRACKREC_LISTEN_ON"; exit 3; }
+[[ -x "$TRACKREC_LISTEN_OFF" ]] || { echo "Missing: $TRACKREC_LISTEN_OFF"; exit 3; }
+[[ -x "$RECORDER" ]] || { echo "Missing: $RECORDER"; exit 3; }
 
+# ---- Runtime state ----
 STATE_DIR="/run/user/$(id -u)/trackrec-run"
-MAP_FILE="$STATE_DIR/moved-streams.tsv"     # stream_id \t orig_sink_id
-SEEN_FILE="$STATE_DIR/seen-streams.txt"     # stream_ids we already processed
+MAP_FILE="$STATE_DIR/moved-streams.tsv"
+SEEN_FILE="$STATE_DIR/seen-streams.txt"
 mkdir -p "$STATE_DIR"
 : > "$MAP_FILE"
 : > "$SEEN_FILE"
 
 cleanup() {
   set +e
-
-  [[ "$LISTEN" -eq 1 ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1 || true
+  [[ "$LISTEN" -eq 1 ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1
 
   if [[ -n "${FOLLOW_PID:-}" ]]; then
-    kill "$FOLLOW_PID" >/dev/null 2>&1 || true
-    wait "$FOLLOW_PID" >/dev/null 2>&1 || true
+    kill "$FOLLOW_PID" >/dev/null 2>&1
+    wait "$FOLLOW_PID" >/dev/null 2>&1
   fi
 
   if [[ -s "$MAP_FILE" ]]; then
     while IFS=$'\t' read -r sid orig_sink; do
-      pactl move-sink-input "$sid" "$orig_sink" >/dev/null 2>&1 || true
+      pactl move-sink-input "$sid" "$orig_sink" >/dev/null 2>&1
     done < "$MAP_FILE"
   fi
 
-  rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
+  rm -rf "$STATE_DIR" >/dev/null 2>&1
 }
 trap cleanup EXIT INT TERM
 
@@ -117,31 +136,24 @@ pat_lc="$(echo "$pattern" | tr '[:upper:]' '[:lower:]')"
 match_and_move_new_streams() {
   local ids id block orig_sink app bin media hay
   ids="$(pactl list short sink-inputs | awk '{print $1}' || true)"
-  [[ -z "$ids" ]] && return 0
 
   for id in $ids; do
-    if grep -qx "$id" "$SEEN_FILE" 2>/dev/null; then
-      continue
-    fi
+    grep -qx "$id" "$SEEN_FILE" && continue
 
     block="$(pactl list sink-inputs | sed -n "/Sink Input #$id\b/,/^$/p")"
     orig_sink="$(echo "$block" | sed -n 's/^[[:space:]]*Sink: \([0-9]\+\).*/\1/p' | head -n1)"
     [[ -z "$orig_sink" ]] && { echo "$id" >> "$SEEN_FILE"; continue; }
 
-    app="$(echo "$block" | sed -n 's/^[[:space:]]*application\.name = "\(.*\)".*/\1/p' | head -n1)"
-    bin="$(echo "$block" | sed -n 's/^[[:space:]]*application\.process\.binary = "\(.*\)".*/\1/p' | head -n1)"
-    media="$(echo "$block" | sed -n 's/^[[:space:]]*media\.name = "\(.*\)".*/\1/p' | head -n1)"
+    app="$(echo "$block" | sed -n 's/.*application\.name = "\(.*\)".*/\1/p')"
+    bin="$(echo "$block" | sed -n 's/.*application\.process\.binary = "\(.*\)".*/\1/p')"
+    media="$(echo "$block" | sed -n 's/.*media\.name = "\(.*\)".*/\1/p')"
 
     hay="$(printf "%s\n%s\n%s\n" "$app" "$bin" "$media" | tr '[:upper:]' '[:lower:]')"
 
     if echo "$hay" | grep -qF "$pat_lc"; then
       if pactl move-sink-input "$id" rec >/dev/null 2>&1; then
-        if [[ "$FORCE_VOLUME" -eq 1 ]]; then
-          pactl set-sink-input-volume "$id" 100% >/dev/null 2>&1 || true
-        fi
+        [[ "$FORCE_VOLUME" -eq 1 ]] && pactl set-sink-input-volume "$id" 100%
         printf "%s\t%s\n" "$id" "$orig_sink" >> "$MAP_FILE"
-      else
-        echo "Warning: failed to move sink-input #$id to rec" >&2
       fi
     fi
 
@@ -150,24 +162,10 @@ match_and_move_new_streams() {
 }
 
 match_and_move_new_streams
-if [[ ! -s "$MAP_FILE" ]]; then
-  echo "No matching audio streams for '$pattern'. Start playback first."
-  exit 4
-fi
-
-if [[ -z "$OUTDIR" ]]; then
-  echo "ERROR: OUTDIR resolved to empty string"
-  exit 5
-fi
 
 mkdir -p "$OUTDIR"
 
-if [[ "$LISTEN" -eq 1 ]]; then
-  "$TRACKREC_LISTEN_ON"
-  echo "Listen: ON"
-else
-  echo "Listen: OFF (silent capture)"
-fi
+[[ "$LISTEN" -eq 1 ]] && "$TRACKREC_LISTEN_ON"
 
 if [[ "$FOLLOW" -eq 1 ]]; then
   (
@@ -177,25 +175,18 @@ if [[ "$FOLLOW" -eq 1 ]]; then
     done
   ) &
   FOLLOW_PID="$!"
-  echo "Follow: ON (interval ${FOLLOW_INTERVAL}s)"
-else
-  echo "Follow: OFF"
 fi
 
 echo "Recording '$pattern' → $OUTDIR"
-echo "Player: $PLAYER | min-seconds: $MIN_SECONDS | format: $FORMAT | dedupe: $([[ "$DEDUPE" -eq 1 ]] && echo ON || echo OFF) | force-volume: $([[ "$FORCE_VOLUME" -eq 1 ]] && echo ON || echo OFF)"
+echo "Format: $FORMAT @ $SAMPLE_RATE Hz"
+echo "Dedupe: $DEDUPE | Autoskip: $AUTOSKIP (${AUTOSKIP_DELAY}s) | Force-volume: $FORCE_VOLUME"
 
 extra_args=()
-if [[ "$FORMAT" == "flac" ]]; then
-  extra_args+=(--comp "$COMP")
-elif [[ "$FORMAT" == "mp3" ]]; then
-  extra_args+=(--mp3-bitrate "$MP3_BITRATE")
-fi
+[[ "$FORMAT" == "flac" ]] && extra_args+=(--comp "$COMP")
+[[ "$FORMAT" == "mp3" ]] && extra_args+=(--mp3-bitrate "$MP3_BITRATE")
 
 dedupe_args=()
-if [[ "$DEDUPE" -eq 1 ]]; then
-  dedupe_args+=(--dedupe)
-fi
+[[ "$DEDUPE" -eq 1 ]] && dedupe_args+=(--dedupe)
 
 exec "$RECORDER" \
   --source rec.monitor \
@@ -204,5 +195,7 @@ exec "$RECORDER" \
   --format "$FORMAT" \
   --min-seconds "$MIN_SECONDS" \
   --sample-rate "$SAMPLE_RATE" \
+  --autoskip "$AUTOSKIP" \
+  --autoskip-delay "$AUTOSKIP_DELAY" \
   "${extra_args[@]}" \
   "${dedupe_args[@]}"

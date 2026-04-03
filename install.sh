@@ -274,6 +274,10 @@ TRACKREC_MP3_BITRATE="320k"
 
 TRACKREC_SAMPLE_RATE="$INITIAL_SAMPLE_RATE"
 
+TRACKREC_AUTOSKIP="0"
+
+TRACKREC_AUTOSKIP_DELAY="5"
+
 TRACKREC_LISTEN="0"
 
 TRACKREC_FOLLOW="1"
@@ -312,6 +316,24 @@ if ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
 TRACKREC_SAMPLE_RATE="$INITIAL_SAMPLE_RATE"
 CFG
   echo "Added missing default: TRACKREC_SAMPLE_RATE=\"$INITIAL_SAMPLE_RATE\""
+fi
+
+if ! grep -q '^TRACKREC_AUTOSKIP=' "$CFG_FILE" 2>/dev/null; then
+  cat >> "$CFG_FILE" <<'CFG'
+
+# automatically skip to the next track when a duplicate is detected
+TRACKREC_AUTOSKIP="0"
+CFG
+  echo 'Added missing default: TRACKREC_AUTOSKIP="0"'
+fi
+
+if ! grep -q '^TRACKREC_AUTOSKIP_DELAY=' "$CFG_FILE" 2>/dev/null; then
+  cat >> "$CFG_FILE" <<'CFG'
+
+# delay in seconds before triggering MPRIS Next on duplicate autoskip
+TRACKREC_AUTOSKIP_DELAY="5"
+CFG
+  echo 'Added missing default: TRACKREC_AUTOSKIP_DELAY="5"'
 fi
 
 # Create output directory:

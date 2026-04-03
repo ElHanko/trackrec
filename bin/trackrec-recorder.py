@@ -41,7 +41,20 @@ def to_int_str(v) -> str:
 
 
 class Recorder:
-    def __init__(self, out_dir, source, preferred_player, comp_level, min_seconds, dedupe, out_format, mp3_bitrate, sample_rate):
+    def __init__(
+        self,
+        out_dir,
+        source,
+        preferred_player,
+        comp_level,
+        min_seconds,
+        dedupe,
+        out_format,
+        mp3_bitrate,
+        sample_rate,
+        autoskip,
+        autoskip_delay,
+    ):
         self.out_dir = out_dir
         self.source = source
         self.preferred_player = preferred_player
@@ -51,10 +64,15 @@ class Recorder:
         self.out_format = out_format
         self.mp3_bitrate = mp3_bitrate
         self.sample_rate = sample_rate
+        self.autoskip = bool(autoskip)
+        self.autoskip_delay = autoskip_delay
+        self.autoskip_pending = False
+        self.autoskip_track_id = None
 
         self.bus = dbus.SessionBus()
         self.player_name = None
         self.props = None
+        self.player = None
 
         self.proc = None
         self.current_path = None
@@ -73,7 +91,12 @@ class Recorder:
         self.state_dir = f"/run/user/{os.getuid()}/trackrec-run"
         self.status_file = os.path.join(self.state_dir, "recorder.status")
         os.makedirs(self.state_dir, exist_ok=True)
-        self._write_status(STATE="idle")
+        self._write_status(
+            STATE="idle",
+            AUTOSKIP=("1" if self.autoskip else "0"),
+            AUTOSKIP_DELAY=str(self.autoskip_delay),
+            AUTOSKIP_PENDING="0",
+        )
 
     def _write_status(self, **fields):
         try:
@@ -111,6 +134,7 @@ class Recorder:
 
         obj = self.bus.get_object(self.player_name, "/org/mpris/MediaPlayer2")
         self.props = dbus.Interface(obj, "org.freedesktop.DBus.Properties")
+        self.player = dbus.Interface(obj, "org.mpris.MediaPlayer2.Player")
 
         self.bus.add_signal_receiver(
             self.on_properties_changed,
@@ -154,6 +178,66 @@ class Recorder:
                 return p
             i += 1
 
+    def _clear_autoskip(self):
+        self.autoskip_pending = False
+        self.autoskip_track_id = None
+
+    def _autoskip_next(self):
+        artist = self.pending.get("artist", "").strip() if isinstance(self.pending, dict) else ""
+        title = self.pending.get("title", "").strip() if isinstance(self.pending, dict) else ""
+
+        try:
+            if not self.autoskip_pending:
+                return False
+
+            print("AUTOSKIP -> Next")
+            self.player.Next()
+        except Exception as e:
+            print(f"Warning: autoskip failed: {e}")
+        finally:
+            self._clear_autoskip()
+            self._write_status(
+                STATE="skipped",
+                ARTIST=artist,
+                TITLE=title,
+                SPOTIFY_URL=self.current_url or "",
+                AUTOSKIP=("1" if self.autoskip else "0"),
+                AUTOSKIP_DELAY=str(self.autoskip_delay),
+                AUTOSKIP_PENDING="0",
+            )
+
+        return False
+
+    def _schedule_autoskip(self, md):
+        if not self.autoskip:
+            return
+
+        track_id = md.get("trackid") or None
+
+        if self.autoskip_pending and self.autoskip_track_id == track_id:
+            return
+
+        self.autoskip_pending = True
+        self.autoskip_track_id = track_id
+
+        self._write_status(
+            STATE="skipped",
+            ARTIST=md.get("artist", "").strip(),
+            TITLE=md.get("title", "").strip(),
+            SPOTIFY_URL=md.get("url", "") or "",
+            AUTOSKIP=("1" if self.autoskip else "0"),
+            AUTOSKIP_DELAY=str(self.autoskip_delay),
+            AUTOSKIP_PENDING="1",
+        )
+
+        delay = max(0, int(self.autoskip_delay))
+        if delay == 0:
+            self._autoskip_next()
+            return
+
+        print(f"AUTOSKIP scheduled in {delay}s")
+        GLib.timeout_add_seconds(delay, self._autoskip_next)
+
     def _finalize(self):
         if not self.proc:
             return
@@ -189,6 +273,9 @@ class Recorder:
             LAST_DURATION=f"{dur:.1f}",
             LAST_FILE=self.current_path or "",
             LAST_SPOTIFY_URL=self.current_url or "",
+            AUTOSKIP=("1" if self.autoskip else "0"),
+            AUTOSKIP_DELAY=str(self.autoskip_delay),
+            AUTOSKIP_PENDING="0",
         )
 
         self.current_path = None
@@ -211,10 +298,14 @@ class Recorder:
                 ARTIST=artist,
                 TITLE=title,
                 SPOTIFY_URL=url,
+                AUTOSKIP=("1" if self.autoskip else "0"),
+                AUTOSKIP_DELAY=str(self.autoskip_delay),
+                AUTOSKIP_PENDING="0",
             )
 
             self.current_track_id = md.get("trackid")
             self.current_url = url
+            self._schedule_autoskip(md)
             return
 
         name = f"{md['artist']} - {md['title']}".strip(" -")
@@ -270,6 +361,9 @@ class Recorder:
             FILE=out_path,
             STARTED_AT=int(self.current_started_at),
             SPOTIFY_URL=url,
+            AUTOSKIP=("1" if self.autoskip else "0"),
+            AUTOSKIP_DELAY=str(self.autoskip_delay),
+            AUTOSKIP_PENDING="0",
         )
 
     def _ensure_started(self):
@@ -297,6 +391,10 @@ class Recorder:
 
         if "Metadata" in changed:
             md = self.get_metadata()
+
+            if self.autoskip_pending and md.get("trackid") != self.autoskip_track_id:
+                self._clear_autoskip()
+
             self.pending = md
 
             if self.playback_status != "Playing":
@@ -333,6 +431,8 @@ def main():
     ap.add_argument("--min-seconds", type=int, default=30, help="Drop recordings shorter than this")
     ap.add_argument("--dedupe", action="store_true", help="Skip recording if SPOTIFY_URL was already kept before (stored in <out>/.spotify_index)")
     ap.add_argument("--sample-rate", type=int, default=44100, choices=(44100, 48000), help="Capture sample rate in Hz")
+    ap.add_argument("--autoskip", type=int, default=0, choices=(0, 1), help="Automatically skip duplicate tracks via MPRIS Next")
+    ap.add_argument("--autoskip-delay", type=int, default=5, help="Delay in seconds before triggering autoskip")
     args = ap.parse_args()
 
     DBusGMainLoop(set_as_default=True)
@@ -347,6 +447,8 @@ def main():
         args.format,
         args.mp3_bitrate,
         args.sample_rate,
+        args.autoskip,
+        args.autoskip_delay,
     )
     if not r.connect_player():
         raise SystemExit(2)

@@ -136,6 +136,9 @@ load_recorder_state() {
   LAST_DURATION=""
   LAST_FILE=""
   LAST_SPOTIFY_URL=""
+  AUTOSKIP=""
+  AUTOSKIP_DELAY=""
+  AUTOSKIP_PENDING=""
 
   [[ -f "$STATUS_FILE" ]] || return 0
 
@@ -151,12 +154,15 @@ load_recorder_state() {
       LAST_DURATION) LAST_DURATION="$v" ;;
       LAST_FILE) LAST_FILE="$v" ;;
       LAST_SPOTIFY_URL) LAST_SPOTIFY_URL="$v" ;;
+      AUTOSKIP) AUTOSKIP="$v" ;;
+      AUTOSKIP_DELAY) AUTOSKIP_DELAY="$v" ;;
+      AUTOSKIP_PENDING) AUTOSKIP_PENDING="$v" ;;
     esac
   done < "$STATUS_FILE"
 }
 
 render_watch() {
-  local rp rmp rec_lines elapsed
+  local rp rmp rec_lines elapsed autoskip_human
   rp="$(rec_present)"
   rmp="$(recmon_present)"
   rec_lines="$(recorder_lines)"
@@ -183,6 +189,8 @@ render_watch() {
     return
   fi
 
+  autoskip_human="$([[ "${AUTOSKIP:-0}" == "1" ]] && echo ON || echo OFF)"
+
   case "${STATE:-}" in
     recording)
       elapsed="$(since_epoch "${STARTED_AT:-}")"
@@ -195,6 +203,8 @@ render_watch() {
       [[ -n "$elapsed" ]] && echo "Elapsed       : $elapsed"
       [[ -n "${FILE:-}" ]] && echo "File          : ${FILE}"
       [[ -n "${SPOTIFY_URL:-}" ]] && echo "Spotify URL   : ${SPOTIFY_URL}"
+      [[ -n "${AUTOSKIP:-}" ]] && echo "Autoskip      : $autoskip_human"
+      [[ -n "${AUTOSKIP_DELAY:-}" ]] && echo "Autoskip delay: ${AUTOSKIP_DELAY}s"
       ;;
     skipped)
       echo "Recorder      : running"
@@ -203,10 +213,15 @@ render_watch() {
         echo "Track         : ${ARTIST:-?} - ${TITLE:-?}"
       fi
       [[ -n "${SPOTIFY_URL:-}" ]] && echo "Spotify URL   : ${SPOTIFY_URL}"
+      [[ -n "${AUTOSKIP:-}" ]] && echo "Autoskip      : $autoskip_human"
+      [[ -n "${AUTOSKIP_DELAY:-}" ]] && echo "Autoskip delay: ${AUTOSKIP_DELAY}s"
+      [[ "${AUTOSKIP_PENDING:-0}" == "1" ]] && echo "Next action   : autoskip pending"
       ;;
     idle|"")
       echo "Recorder      : running"
       echo "State         : idle"
+      [[ -n "${AUTOSKIP:-}" ]] && echo "Autoskip      : $autoskip_human"
+      [[ -n "${AUTOSKIP_DELAY:-}" ]] && echo "Autoskip delay: ${AUTOSKIP_DELAY}s"
       if [[ -n "${LAST_RESULT:-}" ]]; then
         echo
         echo "Last result   : ${LAST_RESULT:-?}"
@@ -219,6 +234,9 @@ render_watch() {
       echo "State         : ${STATE}"
       [[ -n "${ARTIST:-}" || -n "${TITLE:-}" ]] && echo "Track         : ${ARTIST:-?} - ${TITLE:-?}"
       [[ -n "${FILE:-}" ]] && echo "File          : ${FILE}"
+      [[ -n "${AUTOSKIP:-}" ]] && echo "Autoskip      : $autoskip_human"
+      [[ -n "${AUTOSKIP_DELAY:-}" ]] && echo "Autoskip delay: ${AUTOSKIP_DELAY}s"
+      [[ "${AUTOSKIP_PENDING:-0}" == "1" ]] && echo "Next action   : autoskip pending"
       ;;
   esac
 }
@@ -278,6 +296,15 @@ render_human() {
           else
             echo "  STARTED_AT=$v"
           fi
+          ;;
+        AUTOSKIP)
+          echo "  AUTOSKIP=$([[ "$v" == "1" ]] && echo ON || echo OFF)"
+          ;;
+        AUTOSKIP_DELAY)
+          echo "  AUTOSKIP_DELAY=${v}s"
+          ;;
+        AUTOSKIP_PENDING)
+          echo "  AUTOSKIP_PENDING=$([[ "$v" == "1" ]] && echo YES || echo NO)"
           ;;
         *)
           echo "  $k=$v"
@@ -392,7 +419,7 @@ render_json() {
   printf '"rec_run_state_present":%s,' "$( [[ -d "$STATE_DIR" ]] && echo 1 || echo 0 )"
   printf '"moved_streams_map_present":%s,' "$( [[ -f "$MAP_FILE" ]] && echo 1 || echo 0 )"
   printf '"moved_streams":%s,' "$moved_json"
-  printf '"recorder_state":{"state":"%s","artist":"%s","title":"%s","file":"%s","started_at":"%s","spotify_url":"%s","last_result":"%s","last_duration":"%s","last_file":"%s","last_spotify_url":"%s"}' \
+  printf '"recorder_state":{"state":"%s","artist":"%s","title":"%s","file":"%s","started_at":"%s","spotify_url":"%s","last_result":"%s","last_duration":"%s","last_file":"%s","last_spotify_url":"%s","autoskip":"%s","autoskip_delay":"%s","autoskip_pending":"%s"}' \
     "$(json_escape "$STATE")" \
     "$(json_escape "$ARTIST")" \
     "$(json_escape "$TITLE")" \
@@ -402,7 +429,10 @@ render_json() {
     "$(json_escape "$LAST_RESULT")" \
     "$(json_escape "$LAST_DURATION")" \
     "$(json_escape "$LAST_FILE")" \
-    "$(json_escape "$LAST_SPOTIFY_URL")"
+    "$(json_escape "$LAST_SPOTIFY_URL")" \
+    "$(json_escape "$AUTOSKIP")" \
+    "$(json_escape "$AUTOSKIP_DELAY")" \
+    "$(json_escape "$AUTOSKIP_PENDING")"
   printf '}\n'
 }
 
