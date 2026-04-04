@@ -152,16 +152,12 @@ class TrackrecTUI(App):
 
         lines.append("")
         lines.append("LOG")
-        lines.append("-" * 70)
 
         if not self.log_lines:
             lines.append("(no live output in this session)")
         else:
             for line in self.log_lines[-10:]:
                 lines.append(self.truncate(line, 70))
-
-        lines.append("-" * 70)
-        lines.append("[s] start   [x] stop   [r] reload   [l] clear   [q] quit")
 
         return "\n".join(lines)
 
