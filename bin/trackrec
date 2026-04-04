@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+cmd="${1:-tui}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$cmd" in
+  tui)
+    exec "$SCRIPT_DIR/trackrec-tui" "$@"
+    ;;
+  run)
+    exec "$SCRIPT_DIR/trackrec-run" "$@"
+    ;;
+  stop)
+    exec "$SCRIPT_DIR/trackrec-stop" "$@"
+    ;;
+  status)
+    exec "$SCRIPT_DIR/trackrec-status" "$@"
+    ;;
+  watch)
+    exec "$SCRIPT_DIR/trackrec-status" --watch "$@"
+    ;;
+  normalize)
+    exec "$SCRIPT_DIR/trackrec-normalize" "$@"
+    ;;
+  enrich)
+    if [[ ! -x "$SCRIPT_DIR/trackrec-enrich" ]]; then
+      echo "trackrec enrich is not installed." >&2
+      echo "Reinstall with: ./install.sh --with-enrich" >&2
+      exit 2
+    fi
+    exec "$SCRIPT_DIR/trackrec-enrich" "$@"
+    ;;
+  setup)
+    exec "$SCRIPT_DIR/trackrec-setup" "$@"
+    ;;
+  route)
+    exec "$SCRIPT_DIR/trackrec-route" "$@"
+    ;;
+  listen)
+    sub="${1:-}"
+    case "$sub" in
+      on)
+        shift
+        exec "$SCRIPT_DIR/trackrec-listen-on" "$@"
+        ;;
+      off)
+        shift
+        exec "$SCRIPT_DIR/trackrec-listen-off" "$@"
+        ;;
+      *)
+        echo "Usage: trackrec listen <on|off>" >&2
+        exit 2
+        ;;
+    esac
+    ;;
+  uninstall)
+    exec "$SCRIPT_DIR/trackrec-uninstall" "$@"
+    ;;
+  help|-h|--help)
+    cat <<'EOF'
+Usage:
+  trackrec
+  trackrec tui
+  trackrec run <pattern> [options]
+  trackrec stop
+  trackrec status [--json|--watch [SECONDS]]
+  trackrec watch [SECONDS]
+  trackrec normalize [options]
+  trackrec enrich [options]
+  trackrec setup
+  trackrec route [options]
+  trackrec listen <on|off>
+  trackrec uninstall
+
+Examples:
+  trackrec
+  trackrec run spotify
+  trackrec status --watch
+  trackrec listen on
+EOF
+    ;;
+  *)
+    echo "Unknown subcommand: $cmd" >&2
+    echo "Try: trackrec help" >&2
+    exit 2
+    ;;
+esac

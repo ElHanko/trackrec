@@ -52,7 +52,7 @@ echo "Starting trackrec recording for Spotify..."
 echo "Make sure Spotify is already playing before starting."
 echo
 
-"$HOME/.local/bin/trackrec-run" spotify
+"$HOME/.local/bin/trackrec" run spotify
 rc=$?
 
 echo
@@ -63,20 +63,20 @@ EOD
 cat > "$LAUNCHER_DIR/status-watch.sh" <<'EOD'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$HOME/.local/bin/trackrec-status" --watch
+exec "$HOME/.local/bin/trackrec" status --watch
 EOD
 
 cat > "$LAUNCHER_DIR/tui.sh" <<'EOD'
 #!/usr/bin/env bash
 set -euo pipefail
-exec "$HOME/.local/bin/trackrec-tui"
+exec "$HOME/.local/bin/trackrec"
 EOD
 
 cat > "$LAUNCHER_DIR/enrich-recordings.sh" <<'EOD'
 #!/usr/bin/env bash
 set -uo pipefail
 
-"$HOME/.local/bin/trackrec-enrich" --write --set-year --set-date --set-genre
+"$HOME/.local/bin/trackrec" enrich --write --set-year --set-date --set-genre
 
 rc=$?
 echo
@@ -88,7 +88,7 @@ cat > "$LAUNCHER_DIR/normalize-dj.sh" <<'EOD'
 #!/usr/bin/env bash
 set -uo pipefail
 
-"$HOME/.local/bin/trackrec-normalize" --write --preset dj --suffix DJ
+"$HOME/.local/bin/trackrec" normalize --write --preset dj --suffix DJ
 
 rc=$?
 echo
@@ -100,7 +100,7 @@ cat > "$LAUNCHER_DIR/stop.sh" <<'EOD'
 #!/usr/bin/env bash
 set -uo pipefail
 
-"$HOME/.local/bin/trackrec-stop"
+"$HOME/.local/bin/trackrec" stop
 
 rc=$?
 echo
@@ -112,7 +112,7 @@ cat > "$LAUNCHER_DIR/listen-on.sh" <<'EOD'
 #!/usr/bin/env bash
 set -uo pipefail
 
-"$HOME/.local/bin/trackrec-listen-on"
+"$HOME/.local/bin/trackrec" listen on
 
 rc=$?
 echo
@@ -124,7 +124,7 @@ cat > "$LAUNCHER_DIR/listen-off.sh" <<'EOD'
 #!/usr/bin/env bash
 set -uo pipefail
 
-"$HOME/.local/bin/trackrec-listen-off"
+"$HOME/.local/bin/trackrec" listen off
 
 rc=$?
 echo

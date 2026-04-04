@@ -14,7 +14,7 @@ Usage:
   ./install.sh [--with-enrich] [--link]
 
 Installs trackrec into ~/.local/bin with real files stored under:
-  ~/.local/bin/trackrec/
+  ~/.local/lib/trackrec/
 
 Options:
   --with-enrich   also install optional enrichment support for trackrec-enrich
@@ -34,7 +34,7 @@ done
 PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 BIN_SRC="$PROJECT_DIR/bin"
 BIN_DST="$HOME/.local/bin"
-APP_DIR="$BIN_DST/trackrec"
+APP_DIR="$HOME/.local/lib/trackrec"
 PROFILE="$HOME/.profile"
 
 VENV_DIR="$PROJECT_DIR/.venv"
@@ -82,6 +82,7 @@ fi
 
 # Core tools (always installed)
 CORE_TOOLS=(
+  trackrec
   trackrec-recorder.py
   trackrec-listen-off
   trackrec-listen-on
@@ -96,15 +97,7 @@ CORE_TOOLS=(
 )
 
 WRAPPER_TOOLS=(
-  trackrec-run
-  trackrec-status
-  trackrec-stop
-  trackrec-setup
-  trackrec-route
-  trackrec-listen-on
-  trackrec-listen-off
-  trackrec-normalize
-  trackrec-tui
+  trackrec
   trackrec-uninstall
 )
 
@@ -149,24 +142,7 @@ create_wrapper() {
   cat > "$wrapper" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-
-APP_DIR="\$HOME/.local/bin/trackrec"
-VENV_PY="$VENV_DIR/bin/python"
-USE_PROJECT_VENV="$USE_PROJECT_VENV"
-LINK_MODE="$LINK_MODE"
-
-case "$name" in
-  trackrec-tui)
-    if [[ "\$LINK_MODE" -eq 1 && "\$USE_PROJECT_VENV" -eq 1 && -x "\$VENV_PY" ]]; then
-      exec "\$VENV_PY" "\$APP_DIR/$name" "\$@"
-    else
-      exec python3 "\$APP_DIR/$name" "\$@"
-    fi
-    ;;
-  *)
-    exec "\$APP_DIR/$name" "\$@"
-    ;;
-esac
+exec "\$HOME/.local/lib/trackrec/$name" "\$@"
 EOF
   chmod 755 "$wrapper"
 }
@@ -246,9 +222,25 @@ for name in "${ALL_TOOLS[@]}"; do
   install_tool "$name"
 done
 
-if [[ "$WITH_ENRICH" -eq 1 ]]; then
-  WRAPPER_TOOLS+=(trackrec-enrich)
-fi
+LEGACY_WRAPPERS=(
+  trackrec-run
+  trackrec-status
+  trackrec-stop
+  trackrec-setup
+  trackrec-route
+  trackrec-listen-on
+  trackrec-listen-off
+  trackrec-normalize
+  trackrec-tui
+  trackrec-enrich
+)
+
+echo
+echo "Removing legacy wrappers from $BIN_DST ..."
+for name in "${LEGACY_WRAPPERS[@]}"; do
+  rm -f "$BIN_DST/$name"
+  echo "  -> $name"
+done
 
 echo
 echo "Creating command wrappers in $BIN_DST ..."
@@ -459,7 +451,7 @@ To use:
   3) Fill:
        ~/.config/trackrec/.env
   4) Run:
-       trackrec-enrich [<recordings-dir>] --write
+       trackrec enrich [<recordings-dir>] --write
 
 NOTE
 else
@@ -478,9 +470,12 @@ fi
 echo
 echo "Done."
 echo "Open a new login shell (or run: source ~/.profile) then test:"
-echo "  trackrec-status"
-echo "  trackrec-run spotify"
-echo "  trackrec-tui"
+echo "  trackrec"
+echo "  trackrec run spotify"
+echo "  trackrec status --watch"
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
+  echo "  trackrec enrich --write"
+fi
 echo
 echo "Installed files:"
 echo "  $APP_DIR"
@@ -489,4 +484,4 @@ echo "Edit defaults here:"
 echo "  $CFG_FILE"
 echo
 echo "To uninstall later run:"
-echo "  trackrec-uninstall"
+echo "  trackrec uninstall"
