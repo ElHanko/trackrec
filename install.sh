@@ -336,6 +336,9 @@ TRACKREC_DEDUPE="1"
 # force matched app stream volume to 100% before recording
 # helps avoid accidental low-volume recordings caused by per-app volume changes
 TRACKREC_FORCE_VOLUME="1"
+
+# TUI feature flags
+TRACKREC_TUI_ENABLE_ENRICH="0"
 CFG
   chmod 600 "$CFG_FILE" || true
   created_cfg=1
@@ -392,6 +395,15 @@ CFG
   echo 'Added missing default: TRACKREC_FORMAT="flac"'
 fi
 
+if ! grep -q '^TRACKREC_TUI_ENABLE_ENRICH=' "$CFG_FILE" 2>/dev/null; then
+  cat >> "$CFG_FILE" <<'CFG'
+
+# TUI feature flags
+TRACKREC_TUI_ENABLE_ENRICH="0"
+CFG
+  echo 'Added missing default: TRACKREC_TUI_ENABLE_ENRICH="0"'
+fi
+
 # Create output directory:
 # - if config was just created, use the default
 # - otherwise respect configured TRACKREC_OUTDIR
@@ -420,6 +432,71 @@ ENV
     echo "Created enrichment .env template: $ENV_FILE"
   else
     echo "Enrichment .env exists: $ENV_FILE"
+  fi
+    if ! grep -q '^TRACKREC_TUI_ENABLE_ENRICH=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# TUI feature flags
+TRACKREC_TUI_ENABLE_ENRICH="1"
+CFG
+    echo 'Added missing default: TRACKREC_TUI_ENABLE_ENRICH="1"'
+  else
+    sed -i 's/^TRACKREC_TUI_ENABLE_ENRICH=.*/TRACKREC_TUI_ENABLE_ENRICH="1"/' "$CFG_FILE"
+    echo 'Updated: TRACKREC_TUI_ENABLE_ENRICH="1"'
+  fi
+
+  if ! grep -q '^TRACKREC_ENRICH_WRITE=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# Enrich defaults
+TRACKREC_ENRICH_WRITE="1"
+CFG
+    echo 'Added missing default: TRACKREC_ENRICH_WRITE="1"'
+  fi
+
+  if ! grep -q '^TRACKREC_ENRICH_FORCE=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# force overwrite existing enrich tags
+TRACKREC_ENRICH_FORCE="0"
+CFG
+    echo 'Added missing default: TRACKREC_ENRICH_FORCE="0"'
+  fi
+
+  if ! grep -q '^TRACKREC_ENRICH_SET_YEAR=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# write standard year tag from Spotify release date
+TRACKREC_ENRICH_SET_YEAR="1"
+CFG
+    echo 'Added missing default: TRACKREC_ENRICH_SET_YEAR="1"'
+  fi
+
+  if ! grep -q '^TRACKREC_ENRICH_SET_DATE=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# write standard date tag from Spotify release date
+TRACKREC_ENRICH_SET_DATE="0"
+CFG
+    echo 'Added missing default: TRACKREC_ENRICH_SET_DATE="0"'
+  fi
+
+  if ! grep -q '^TRACKREC_ENRICH_SET_GENRE=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# write standard genre tag from Spotify artist genres
+TRACKREC_ENRICH_SET_GENRE="0"
+CFG
+    echo 'Added missing default: TRACKREC_ENRICH_SET_GENRE="0"'
+  fi
+
+  if ! grep -q '^TRACKREC_ENRICH_DJ=' "$CFG_FILE" 2>/dev/null; then
+    cat >> "$CFG_FILE" <<'CFG'
+
+# write DJ-friendly bpm and initialkey tags
+TRACKREC_ENRICH_DJ="0"
+CFG
+    echo 'Added missing default: TRACKREC_ENRICH_DJ="0"'
   fi
 fi
 

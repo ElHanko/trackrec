@@ -30,7 +30,8 @@ if [[ -f "$CFG_FILE" ]]; then
 fi
 
 # ---- Defaults ----
-PLAYER="$pattern"
+PLAYER_DEFAULT="${TRACKREC_PLAYER:-spotify}"
+PLAYER="${pattern:-$PLAYER_DEFAULT}"
 OUTDIR="${TRACKREC_OUTDIR:-$HOME/recordings}"
 MIN_SECONDS="${TRACKREC_MIN_SECONDS:-30}"
 COMP="${TRACKREC_COMP:-5}"

@@ -29,6 +29,12 @@ class TrackrecTUI(App):
         "TRACKREC_LISTEN",
         "TRACKREC_FOLLOW",
         "TRACKREC_FORCE_VOLUME",
+        "TRACKREC_ENRICH_WRITE",
+        "TRACKREC_ENRICH_FORCE",
+        "TRACKREC_ENRICH_SET_YEAR",
+        "TRACKREC_ENRICH_SET_DATE",
+        "TRACKREC_ENRICH_SET_GENRE",
+        "TRACKREC_ENRICH_DJ",
     }
 
     BINDINGS = [
@@ -93,8 +99,19 @@ class TrackrecTUI(App):
             "TRACKREC_FOLLOW_INTERVAL",
             "TRACKREC_DEDUPE",
             "TRACKREC_FORCE_VOLUME",
-            "TRACKREC_PLAYER",
         ]
+
+        if self.enrich_enabled():
+            preferred_order.extend([
+                "TRACKREC_ENRICH_WRITE",
+                "TRACKREC_ENRICH_FORCE",
+                "TRACKREC_ENRICH_SET_YEAR",
+                "TRACKREC_ENRICH_SET_DATE",
+                "TRACKREC_ENRICH_SET_GENRE",
+                "TRACKREC_ENRICH_DJ",
+            ])
+
+        preferred_order.append("TRACKREC_PLAYER")
 
         seen = set()
         keys: list[str] = []
@@ -104,7 +121,11 @@ class TrackrecTUI(App):
                 keys.append(key)
                 seen.add(key)
 
+        hidden_keys = {"TRACKREC_TUI_ENABLE_ENRICH"}
+
         for key in sorted(self.config.keys()):
+            if key in hidden_keys:
+                continue
             if key not in seen:
                 keys.append(key)
 
@@ -149,6 +170,9 @@ class TrackrecTUI(App):
     def toggle_bool_value(self, key: str) -> None:
         current = self.config.get(key, "0").strip()
         self.config[key] = "0" if current == "1" else "1"
+
+    def enrich_enabled(self) -> bool:
+        return self.config.get("TRACKREC_TUI_ENABLE_ENRICH", "0") == "1"
 
     def on_off(self, value: Optional[str]) -> str:
         return "ON" if str(value or "0") == "1" else "OFF"
@@ -303,6 +327,11 @@ class TrackrecTUI(App):
     async def action_enrich(self) -> None:
         if self.view != "main":
             return
+
+        if not self.enrich_enabled():
+            self.log_line("enrich is disabled in this installation")
+            return
+
         if self.process and self.process.returncode is None:
             self.log_line("another job is already running")
             return
@@ -312,7 +341,26 @@ class TrackrecTUI(App):
             return
 
         outdir = self.config.get("TRACKREC_OUTDIR", str(Path.home() / "recordings"))
-        cmd = [str(TRACKREC_ENRICH), outdir, "--write"]
+        cmd = [str(TRACKREC_ENRICH), outdir]
+
+        if self.config.get("TRACKREC_ENRICH_WRITE", "0") == "1":
+            cmd.append("--write")
+
+        if self.config.get("TRACKREC_ENRICH_FORCE", "0") == "1":
+            cmd.append("--force")
+
+        if self.config.get("TRACKREC_ENRICH_SET_YEAR", "0") == "1":
+            cmd.append("--set-year")
+
+        if self.config.get("TRACKREC_ENRICH_SET_DATE", "0") == "1":
+            cmd.append("--set-date")
+
+        if self.config.get("TRACKREC_ENRICH_SET_GENRE", "0") == "1":
+            cmd.append("--set-genre")
+
+        if self.config.get("TRACKREC_ENRICH_DJ", "0") == "1":
+            cmd.append("--dj")
+
         self.log_line(f"$ {' '.join(cmd)}")
 
         self.process = await asyncio.create_subprocess_exec(
