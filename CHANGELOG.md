@@ -1,5 +1,47 @@
 # Changelog
 
+## v1.3.0
+
+### Added
+- add automated release script and remove legacy changelog-based script
+- add trackrec-tui launcher to xfce menu
+- add minimal trackrec terminal interface
+- skip duplicate tracks via delayed MPRIS Next
+- add configurable recorder sample rate
+- remove launcher scripts and desktop menu entries
+- add trackrec-normalize DJ preset launcher
+- add loudnorm presets for post-processing
+- add configurable stream volume reset to 100 percent
+- add optional XFCE menu installer
+- add --dj option for bpm and initial key tags
+
+### Changed
+- add trackrec dispatcher and move install layout
+- remove redundant inline keybinding footer
+- resolve internal backend via script directory
+- resolve internal helpers via script directory
+- introduce internal Spotify backend behind trackrec-enrich
+- add early skip for already enriched files
+- add separate --set-year and --set-date options
+- only expose user-facing commands via wrappers
+- execute tagger wrapper directly
+- add compact live view for --watch mode
+- use recorder rename and improve status output
+- use ~/.local/bin/trackrec with command wrappers
+
+### Fixed
+- initialize sample_rate in Recorder to avoid AttributeError
+- correct PipeWire sample rate detection and interactive prompt output
+- improve cleanup of menu files and add cache hint
+- update help and uninstall entries for Spotify backend rename
+- only request Spotify audio features when needed
+- avoid duplicate XFCE menu entries by removing AudioVideo category
+- improve Spotify backend warnings and DJ tag handling
+- initialize mp3 mode before early skip check
+- resolve internal backend path
+- resolve internal recorder path
+- reduce flicker in --watch mode by avoiding terminal reset
+
 ## v1.2.1
 
 ### Changed
