@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.3.1
+
+### Fixed
+- restore TUI launch and internal tool resolution
+
 ## v1.3.0
 
 ### Added
