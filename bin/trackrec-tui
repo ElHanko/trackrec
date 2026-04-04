@@ -8,12 +8,13 @@ from pathlib import Path
 from typing import Optional
 
 from textual.app import App, ComposeResult
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Header, Static, Input
 
 SCRIPT_PATH = Path(__file__).resolve()
 SCRIPT_DIR = SCRIPT_PATH.parent
 TRACKREC_RUN = SCRIPT_DIR / "trackrec-run"
 TRACKREC_STOP = SCRIPT_DIR / "trackrec-stop"
+TRACKREC_ENRICH = SCRIPT_DIR / "trackrec-enrich"
 
 CONFIG_FILE = Path.home() / ".config" / "trackrec" / "trackrec.conf"
 STATUS_FILE = Path(f"/run/user/{os.getuid()}/trackrec-run/recorder.status")
@@ -22,9 +23,19 @@ STATUS_FILE = Path(f"/run/user/{os.getuid()}/trackrec-run/recorder.status")
 class TrackrecTUI(App):
     TITLE = "trackrec"
 
+    BOOL_KEYS = {
+        "TRACKREC_AUTOSKIP",
+        "TRACKREC_DEDUPE",
+        "TRACKREC_LISTEN",
+        "TRACKREC_FOLLOW",
+        "TRACKREC_FORCE_VOLUME",
+    }
+
     BINDINGS = [
         ("s", "start", "Start"),
+        ("e", "enrich", "Enrich"),
         ("x", "stop", "Stop"),
+        ("c", "config_view", "Config"),
         ("r", "reload", "Reload"),
         ("l", "clear", "Clear"),
         ("q", "quit", "Quit"),
@@ -33,9 +44,14 @@ class TrackrecTUI(App):
     process: Optional[asyncio.subprocess.Process] = None
     read_output_task: Optional[asyncio.Task] = None
     owns_process: bool = False
+    current_job: str = "idle"   # idle | record | enrich
     log_lines: list[str] = []
     status: dict[str, str] = {}
     config: dict[str, str] = {}
+
+    view: str = "main"          # main | config
+    config_keys: list[str] = []
+    config_index: int = 0
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -44,6 +60,7 @@ class TrackrecTUI(App):
 
     async def on_mount(self) -> None:
         self.load_config()
+        self.rebuild_config_keys()
         self.set_interval(1, self.refresh_view)
         self.refresh_view()
 
@@ -61,6 +78,60 @@ class TrackrecTUI(App):
                 key, value = line.split("=", 1)
                 self.config[key.strip()] = value.strip().strip('"').strip("'")
 
+    def rebuild_config_keys(self) -> None:
+        preferred_order = [
+            "TRACKREC_OUTDIR",
+            "TRACKREC_FORMAT",
+            "TRACKREC_COMP",
+            "TRACKREC_MP3_BITRATE",
+            "TRACKREC_SAMPLE_RATE",
+            "TRACKREC_MIN_SECONDS",
+            "TRACKREC_AUTOSKIP",
+            "TRACKREC_AUTOSKIP_DELAY",
+            "TRACKREC_LISTEN",
+            "TRACKREC_FOLLOW",
+            "TRACKREC_FOLLOW_INTERVAL",
+            "TRACKREC_DEDUPE",
+            "TRACKREC_FORCE_VOLUME",
+            "TRACKREC_PLAYER",
+        ]
+
+        seen = set()
+        keys: list[str] = []
+
+        for key in preferred_order:
+            if key in self.config:
+                keys.append(key)
+                seen.add(key)
+
+        for key in sorted(self.config.keys()):
+            if key not in seen:
+                keys.append(key)
+
+        self.config_keys = keys
+        if self.config_index >= len(self.config_keys):
+            self.config_index = max(0, len(self.config_keys) - 1)
+
+    def save_config(self) -> None:
+        CONFIG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+        lines = [
+            "# trackrec defaults (saved by trackrec-tui)",
+            "# CLI flags always override these values.",
+            "",
+        ]
+        for key in self.config_keys:
+            value = self.config.get(key, "")
+            lines.append(f'{key}="{value}"')
+
+        for key in sorted(self.config.keys()):
+            if key not in self.config_keys:
+                value = self.config.get(key, "")
+                lines.append(f'{key}="{value}"')
+
+        CONFIG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        self.log_line("config saved")
+
     def read_status(self) -> None:
         data: dict[str, str] = {}
         if STATUS_FILE.exists():
@@ -71,6 +142,13 @@ class TrackrecTUI(App):
                 key, value = line.split("=", 1)
                 data[key.strip()] = value.strip()
         self.status = data
+
+    def is_bool_key(self, key: str) -> bool:
+        return key in self.BOOL_KEYS
+
+    def toggle_bool_value(self, key: str) -> None:
+        current = self.config.get(key, "0").strip()
+        self.config[key] = "0" if current == "1" else "1"
 
     def on_off(self, value: Optional[str]) -> str:
         return "ON" if str(value or "0") == "1" else "OFF"
@@ -111,12 +189,16 @@ class TrackrecTUI(App):
     def control_line(self) -> str:
         return "OWNED" if self.owns_process else "EXTERNAL"
 
-    def render_view(self) -> str:
+    def job_line(self) -> str:
+        return self.current_job.upper()
+
+    def render_main(self) -> str:
         s = self.status
         c = self.config
         lines: list[str] = []
 
         lines.append(f"STATE     {s.get('STATE', 'idle').upper()}")
+        lines.append(f"JOB       {self.job_line()}")
         lines.append(f"PLAYER    {c.get('TRACKREC_PLAYER', 'spotify')}")
         lines.append("SOURCE    rec.monitor")
         lines.append(f"FORMAT    {self.format_line()}")
@@ -166,6 +248,29 @@ class TrackrecTUI(App):
 
         return "\n".join(lines)
 
+    def render_config(self) -> str:
+        lines = ["CONFIG", ""]
+
+        if not self.config_keys:
+            lines.append("(no config values loaded)")
+        else:
+            for i, key in enumerate(self.config_keys):
+                prefix = ">" if i == self.config_index else " "
+                value = self.config.get(key, "")
+                if self.is_bool_key(key):
+                    value = self.on_off(value)
+                lines.append(f"{prefix} {key:<24} {self.truncate(value, 40)}")
+
+        lines.append("")
+        lines.append("up/down: select   enter/space: toggle bool   s: save   q: back")
+        lines.append("non-boolean editing not implemented yet")
+        return "\n".join(lines)
+
+    def render_view(self) -> str:
+        if self.view == "config":
+            return self.render_config()
+        return self.render_main()
+
     def refresh_view(self) -> None:
         self.read_status()
         self.query_one("#main", Static).update(self.render_view())
@@ -175,8 +280,10 @@ class TrackrecTUI(App):
         self.refresh_view()
 
     async def action_start(self) -> None:
+        if self.view != "main":
+            return
         if self.process and self.process.returncode is None:
-            self.log_line("already running")
+            self.log_line("another job is already running")
             return
 
         player = self.config.get("TRACKREC_PLAYER", "spotify")
@@ -190,6 +297,32 @@ class TrackrecTUI(App):
         )
 
         self.owns_process = True
+        self.current_job = "record"
+        self.read_output_task = asyncio.create_task(self.read_output())
+
+    async def action_enrich(self) -> None:
+        if self.view != "main":
+            return
+        if self.process and self.process.returncode is None:
+            self.log_line("another job is already running")
+            return
+
+        if not TRACKREC_ENRICH.exists():
+            self.log_line("trackrec-enrich is not installed")
+            return
+
+        outdir = self.config.get("TRACKREC_OUTDIR", str(Path.home() / "recordings"))
+        cmd = [str(TRACKREC_ENRICH), outdir, "--write"]
+        self.log_line(f"$ {' '.join(cmd)}")
+
+        self.process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        self.owns_process = True
+        self.current_job = "enrich"
         self.read_output_task = asyncio.create_task(self.read_output())
 
     async def read_output(self) -> None:
@@ -205,12 +338,26 @@ class TrackrecTUI(App):
         except asyncio.CancelledError:
             return
         finally:
-            if self.process and self.process.returncode is not None:
-                self.log_line(f"trackrec-run exited with code {self.process.returncode}")
+            if self.process:
+                rc = await self.process.wait()
+                if self.current_job == "record":
+                    self.log_line(f"trackrec-run exited with code {rc}")
+                elif self.current_job == "enrich":
+                    self.log_line(f"trackrec-enrich exited with code {rc}")
+                else:
+                    self.log_line(f"job exited with code {rc}")
                 self.process = None
                 self.owns_process = False
+                self.current_job = "idle"
+                self.refresh_view()
 
     async def action_stop(self) -> None:
+        if self.view != "main":
+            return
+        if self.current_job == "enrich":
+            self.log_line("stop only applies to recording jobs")
+            return
+
         self.log_line(f"$ {TRACKREC_STOP}")
         proc = await asyncio.create_subprocess_exec(
             str(TRACKREC_STOP),
@@ -225,18 +372,103 @@ class TrackrecTUI(App):
         except asyncio.TimeoutError:
             self.log_line("trackrec-stop timed out")
         self.owns_process = False
+        if self.current_job == "record":
+            self.current_job = "idle"
+
+    async def action_config_view(self) -> None:
+        self.view = "config"
+        self.rebuild_config_keys()
+        self.refresh_view()
 
     async def action_reload(self) -> None:
         self.load_config()
+        self.rebuild_config_keys()
         self.log_line("config reloaded")
         self.refresh_view()
 
     async def action_clear(self) -> None:
+        if self.view != "main":
+            return
         self.log_lines.clear()
         self.refresh_view()
 
+    async def edit_current_config(self) -> None:
+        if not self.config_keys:
+            return
+
+        key = self.config_keys[self.config_index]
+        if self.is_bool_key(key):
+            return
+
+        current_value = self.config.get(key, "")
+
+        input_widget = Input(value=current_value, placeholder=key)
+        await self.push_screen_wait(input_widget)  # likely unsupported for plain Input
+        # Fallback below if needed
+
+    async def on_key(self, event) -> None:
+        if self.view != "config":
+            return
+
+        if not self.config_keys:
+            if event.key == "q":
+                self.view = "main"
+                self.refresh_view()
+            return
+
+        if event.key == "up":
+            self.config_index = max(0, self.config_index - 1)
+            self.refresh_view()
+            event.prevent_default()
+            return
+
+        if event.key == "down":
+            self.config_index = min(len(self.config_keys) - 1, self.config_index + 1)
+            self.refresh_view()
+            event.prevent_default()
+            return
+
+        if event.key in ("enter", "space"):
+            key = self.config_keys[self.config_index]
+            if self.is_bool_key(key):
+                self.toggle_bool_value(key)
+                self.refresh_view()
+            event.prevent_default()
+            return
+
+        if event.key == "e":
+            key = self.config_keys[self.config_index]
+            if not self.is_bool_key(key):
+                current_value = self.config.get(key, "")
+                new_value = await self.prompt_edit_value(key, current_value)
+                if new_value is not None:
+                    self.config[key] = new_value
+                    self.refresh_view()
+            event.prevent_default()
+            return
+
+        if event.key == "s":
+            self.save_config()
+            self.refresh_view()
+            event.prevent_default()
+            return
+
+        if event.key == "q":
+            self.view = "main"
+            self.refresh_view()
+            event.prevent_default()
+            return
+
+    async def prompt_edit_value(self, key: str, current_value: str) -> Optional[str]:
+        return None
+
     async def action_quit(self) -> None:
-        if self.owns_process:
+        if self.view == "config":
+            self.view = "main"
+            self.refresh_view()
+            return
+
+        if self.owns_process and self.current_job == "record":
             self.log_line("stopping owned trackrec-run before exit...")
             try:
                 proc = await asyncio.create_subprocess_exec(
@@ -254,6 +486,7 @@ class TrackrecTUI(App):
                 self.log_line(f"stop on exit failed: {e}")
 
             self.owns_process = False
+            self.current_job = "idle"
 
         if self.read_output_task and not self.read_output_task.done():
             self.read_output_task.cancel()
