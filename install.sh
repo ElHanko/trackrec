@@ -6,8 +6,8 @@ LINK_MODE=0
 
 for a in "${@:-}"; do
   case "$a" in
-    --with-enrich) WITH_ENRICH=1;;
-    --link) LINK_MODE=1;;
+    --with-enrich) WITH_ENRICH=1 ;;
+    --link) LINK_MODE=1 ;;
     -h|--help)
       cat <<'USAGE'
 Usage:
@@ -46,18 +46,47 @@ ENV_FILE="$CFG_DIR/.env"
 
 [[ -d "$BIN_SRC" ]] || { echo "ERROR: missing $BIN_SRC" >&2; exit 1; }
 
-mkdir -p "$BIN_DST"
-mkdir -p "$APP_DIR"
+mkdir -p "$BIN_DST" "$APP_DIR" "$CFG_DIR"
+chmod 700 "$CFG_DIR" || true
 
-if [[ "$LINK_MODE" -eq 1 ]]; then
-  if [[ -t 0 && -t 1 ]]; then
-    echo
-    read -r -p "Use project virtual environment at $VENV_DIR for Python tools? [Y/n]: " reply
-    case "${reply:-Y}" in
-      n|N) USE_PROJECT_VENV=0 ;;
-      *) USE_PROJECT_VENV=1 ;;
-    esac
+append_cfg_if_missing() {
+  local key="$1"
+  local value="$2"
+  local comment="${3:-}"
+
+  if ! grep -q "^${key}=" "$CFG_FILE" 2>/dev/null; then
+    {
+      echo
+      [[ -n "$comment" ]] && echo "# $comment"
+      echo "${key}=\"${value}\""
+    } >> "$CFG_FILE"
+    echo "Added missing default: ${key}=\"${value}\""
   fi
+}
+
+set_cfg_value() {
+  local key="$1"
+  local value="$2"
+
+  if grep -q "^${key}=" "$CFG_FILE" 2>/dev/null; then
+    sed -i "s|^${key}=.*|${key}=\"${value}\"|" "$CFG_FILE"
+    echo "Updated: ${key}=\"${value}\""
+  else
+    {
+      echo
+      echo "${key}=\"${value}\""
+    } >> "$CFG_FILE"
+    echo "Added missing default: ${key}=\"${value}\""
+  fi
+}
+
+if [[ "$LINK_MODE" -eq 1 && -t 0 && -t 1 ]]; then
+  echo
+  read -r -p "Use project virtual environment at $VENV_DIR for Python tools? [Y/n]: " reply
+  case "${reply:-Y}" in
+    n|N) USE_PROJECT_VENV=0 ;;
+    *) USE_PROJECT_VENV=1 ;;
+  esac
 fi
 
 if [[ "$LINK_MODE" -eq 1 && "$USE_PROJECT_VENV" -eq 1 ]]; then
@@ -70,17 +99,13 @@ if [[ "$LINK_MODE" -eq 1 && "$USE_PROJECT_VENV" -eq 1 ]]; then
     echo "Virtual environment exists: $VENV_DIR"
   fi
 
-  if [[ ! -x "$VENV_DIR/bin/python" ]]; then
-    echo "ERROR: missing venv python: $VENV_DIR/bin/python" >&2
-    exit 1
-  fi
+  [[ -x "$VENV_DIR/bin/python" ]] || { echo "ERROR: missing venv python: $VENV_DIR/bin/python" >&2; exit 1; }
 
   echo "Installing/updating Textual in project venv ..."
   "$VENV_DIR/bin/python" -m pip install --upgrade pip >/dev/null
   "$VENV_DIR/bin/python" -m pip install textual
 fi
 
-# Core tools (always installed)
 CORE_TOOLS=(
   trackrec
   trackrec-recorder.py
@@ -101,7 +126,6 @@ WRAPPER_TOOLS=(
   trackrec-uninstall
 )
 
-# Optional tools (installed only with --with-enrich)
 ENRICH_TOOLS=(
   trackrec-enrich
   trackrec-enrich-spot
@@ -159,13 +183,8 @@ detect_sample_rate() {
   fi
 
   case "$rate" in
-    44100|48000)
-      printf '%s\n' "$rate"
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
+    44100|48000) printf '%s\n' "$rate"; return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -183,12 +202,8 @@ choose_sample_rate() {
     case "${choice:-1}" in
       1) printf '%s\n' "44100" ;;
       2) printf '%s\n' "48000" ;;
-      *)
-        echo "Invalid choice, using detected rate: 44100 Hz" >&2
-        printf '%s\n' "44100"
-        ;;
+      *) echo "Invalid choice, using detected rate: 44100 Hz" >&2; printf '%s\n' "44100" ;;
     esac
-
   elif [[ "$detected" == "48000" ]]; then
     echo "  1) use detected system rate: 48000 Hz (recommended)" >&2
     echo "  2) use 44100 Hz instead" >&2
@@ -196,12 +211,8 @@ choose_sample_rate() {
     case "${choice:-1}" in
       1) printf '%s\n' "48000" ;;
       2) printf '%s\n' "44100" ;;
-      *)
-        echo "Invalid choice, using detected rate: 48000 Hz" >&2
-        printf '%s\n' "48000"
-        ;;
+      *) echo "Invalid choice, using detected rate: 48000 Hz" >&2; printf '%s\n' "48000" ;;
     esac
-
   else
     echo "Could not detect PipeWire sample rate automatically." >&2
     echo "  1) 44100 Hz" >&2
@@ -210,10 +221,7 @@ choose_sample_rate() {
     case "${choice:-1}" in
       1) printf '%s\n' "44100" ;;
       2) printf '%s\n' "48000" ;;
-      *)
-        echo "Invalid choice, using 44100 Hz" >&2
-        printf '%s\n' "44100"
-        ;;
+      *) echo "Invalid choice, using 44100 Hz" >&2; printf '%s\n' "44100" ;;
     esac
   fi
 }
@@ -249,7 +257,6 @@ for name in "${WRAPPER_TOOLS[@]}"; do
   echo "  -> $name"
 done
 
-# Ensure ~/.local/bin is in PATH for login shells
 if ! grep -q 'HOME/.local/bin' "$PROFILE" 2>/dev/null; then
   echo "Updating $PROFILE to include ~/.local/bin in PATH ..."
   cat >> "$PROFILE" <<'EOP'
@@ -266,38 +273,27 @@ else
   echo "$PROFILE already mentions ~/.local/bin"
 fi
 
-mkdir -p "$CFG_DIR"
-chmod 700 "$CFG_DIR" || true
-
 echo
 echo "Config directory: $CFG_DIR"
 
 created_cfg=0
-
 DETECTED_SAMPLE_RATE=""
 INITIAL_SAMPLE_RATE="44100"
 
 if DETECTED_SAMPLE_RATE="$(detect_sample_rate)"; then
   :
-else
-  DETECTED_SAMPLE_RATE=""
 fi
 
 NEED_SAMPLE_RATE_CHOICE=0
-
-if [[ ! -f "$CFG_FILE" ]]; then
-  NEED_SAMPLE_RATE_CHOICE=1
-elif ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
+if [[ ! -f "$CFG_FILE" ]] || ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
   NEED_SAMPLE_RATE_CHOICE=1
 fi
 
 if [[ "$NEED_SAMPLE_RATE_CHOICE" -eq 1 ]]; then
   if [[ -t 0 && -t 1 ]]; then
     INITIAL_SAMPLE_RATE="$(choose_sample_rate "$DETECTED_SAMPLE_RATE")"
-  else
-    if [[ "$DETECTED_SAMPLE_RATE" == "44100" || "$DETECTED_SAMPLE_RATE" == "48000" ]]; then
-      INITIAL_SAMPLE_RATE="$DETECTED_SAMPLE_RATE"
-    fi
+  elif [[ "$DETECTED_SAMPLE_RATE" == "44100" || "$DETECTED_SAMPLE_RATE" == "48000" ]]; then
+    INITIAL_SAMPLE_RATE="$DETECTED_SAMPLE_RATE"
   fi
 
   echo "Using initial sample rate: ${INITIAL_SAMPLE_RATE} Hz"
@@ -334,7 +330,6 @@ TRACKREC_FOLLOW_INTERVAL="1"
 TRACKREC_DEDUPE="1"
 
 # force matched app stream volume to 100% before recording
-# helps avoid accidental low-volume recordings caused by per-app volume changes
 TRACKREC_FORCE_VOLUME="1"
 
 # TUI feature flags
@@ -347,66 +342,13 @@ else
   echo "Defaults exist: $CFG_FILE"
 fi
 
-# Backfill newer config keys into existing configs without overwriting user values
-if ! grep -q '^TRACKREC_FORCE_VOLUME=' "$CFG_FILE" 2>/dev/null; then
-  cat >> "$CFG_FILE" <<'CFG'
+append_cfg_if_missing "TRACKREC_FORCE_VOLUME" "1" "force matched app stream volume to 100% before recording"
+append_cfg_if_missing "TRACKREC_SAMPLE_RATE" "$INITIAL_SAMPLE_RATE" "capture sample rate in Hz"
+append_cfg_if_missing "TRACKREC_AUTOSKIP" "0" "automatically skip to the next track when a duplicate is detected"
+append_cfg_if_missing "TRACKREC_AUTOSKIP_DELAY" "5" "delay in seconds before triggering MPRIS Next on duplicate autoskip"
+append_cfg_if_missing "TRACKREC_FORMAT" "flac" "output format: flac or mp3"
+append_cfg_if_missing "TRACKREC_TUI_ENABLE_ENRICH" "0" "TUI feature flags"
 
-# force matched app stream volume to 100% before recording
-# helps avoid accidental low-volume recordings caused by per-app volume changes
-TRACKREC_FORCE_VOLUME="1"
-CFG
-  echo 'Added missing default: TRACKREC_FORCE_VOLUME="1"'
-fi
-
-if ! grep -q '^TRACKREC_SAMPLE_RATE=' "$CFG_FILE" 2>/dev/null; then
-  cat >> "$CFG_FILE" <<CFG
-
-# capture sample rate in Hz
-# valid values: 44100 or 48000
-TRACKREC_SAMPLE_RATE="$INITIAL_SAMPLE_RATE"
-CFG
-  echo "Added missing default: TRACKREC_SAMPLE_RATE=\"$INITIAL_SAMPLE_RATE\""
-fi
-
-if ! grep -q '^TRACKREC_AUTOSKIP=' "$CFG_FILE" 2>/dev/null; then
-  cat >> "$CFG_FILE" <<'CFG'
-
-# automatically skip to the next track when a duplicate is detected
-TRACKREC_AUTOSKIP="0"
-CFG
-  echo 'Added missing default: TRACKREC_AUTOSKIP="0"'
-fi
-
-if ! grep -q '^TRACKREC_AUTOSKIP_DELAY=' "$CFG_FILE" 2>/dev/null; then
-  cat >> "$CFG_FILE" <<'CFG'
-
-# delay in seconds before triggering MPRIS Next on duplicate autoskip
-TRACKREC_AUTOSKIP_DELAY="5"
-CFG
-  echo 'Added missing default: TRACKREC_AUTOSKIP_DELAY="5"'
-fi
-
-if ! grep -q '^TRACKREC_FORMAT=' "$CFG_FILE" 2>/dev/null; then
-  cat >> "$CFG_FILE" <<'CFG'
-
-# output format: flac or mp3
-TRACKREC_FORMAT="flac"
-CFG
-  echo 'Added missing default: TRACKREC_FORMAT="flac"'
-fi
-
-if ! grep -q '^TRACKREC_TUI_ENABLE_ENRICH=' "$CFG_FILE" 2>/dev/null; then
-  cat >> "$CFG_FILE" <<'CFG'
-
-# TUI feature flags
-TRACKREC_TUI_ENABLE_ENRICH="0"
-CFG
-  echo 'Added missing default: TRACKREC_TUI_ENABLE_ENRICH="0"'
-fi
-
-# Create output directory:
-# - if config was just created, use the default
-# - otherwise respect configured TRACKREC_OUTDIR
 if [[ "$created_cfg" -eq 1 ]]; then
   mkdir -p "$HOME/recordings" || true
 else
@@ -416,7 +358,12 @@ else
   [[ -n "$outdir" ]] && mkdir -p "$outdir" || true
 fi
 
-# Optional enrichment support (.env template)
+if [[ "$WITH_ENRICH" -eq 1 ]]; then
+  set_cfg_value "TRACKREC_TUI_ENABLE_ENRICH" "1"
+else
+  set_cfg_value "TRACKREC_TUI_ENABLE_ENRICH" "0"
+fi
+
 if [[ "$WITH_ENRICH" -eq 1 ]]; then
   if [[ ! -f "$ENV_FILE" ]]; then
     cat > "$ENV_FILE" <<'ENV'
@@ -433,71 +380,13 @@ ENV
   else
     echo "Enrichment .env exists: $ENV_FILE"
   fi
-    if ! grep -q '^TRACKREC_TUI_ENABLE_ENRICH=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
 
-# TUI feature flags
-TRACKREC_TUI_ENABLE_ENRICH="1"
-CFG
-    echo 'Added missing default: TRACKREC_TUI_ENABLE_ENRICH="1"'
-  else
-    sed -i 's/^TRACKREC_TUI_ENABLE_ENRICH=.*/TRACKREC_TUI_ENABLE_ENRICH="1"/' "$CFG_FILE"
-    echo 'Updated: TRACKREC_TUI_ENABLE_ENRICH="1"'
-  fi
-
-  if ! grep -q '^TRACKREC_ENRICH_WRITE=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
-
-# Enrich defaults
-TRACKREC_ENRICH_WRITE="1"
-CFG
-    echo 'Added missing default: TRACKREC_ENRICH_WRITE="1"'
-  fi
-
-  if ! grep -q '^TRACKREC_ENRICH_FORCE=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
-
-# force overwrite existing enrich tags
-TRACKREC_ENRICH_FORCE="0"
-CFG
-    echo 'Added missing default: TRACKREC_ENRICH_FORCE="0"'
-  fi
-
-  if ! grep -q '^TRACKREC_ENRICH_SET_YEAR=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
-
-# write standard year tag from Spotify release date
-TRACKREC_ENRICH_SET_YEAR="1"
-CFG
-    echo 'Added missing default: TRACKREC_ENRICH_SET_YEAR="1"'
-  fi
-
-  if ! grep -q '^TRACKREC_ENRICH_SET_DATE=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
-
-# write standard date tag from Spotify release date
-TRACKREC_ENRICH_SET_DATE="0"
-CFG
-    echo 'Added missing default: TRACKREC_ENRICH_SET_DATE="0"'
-  fi
-
-  if ! grep -q '^TRACKREC_ENRICH_SET_GENRE=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
-
-# write standard genre tag from Spotify artist genres
-TRACKREC_ENRICH_SET_GENRE="0"
-CFG
-    echo 'Added missing default: TRACKREC_ENRICH_SET_GENRE="0"'
-  fi
-
-  if ! grep -q '^TRACKREC_ENRICH_DJ=' "$CFG_FILE" 2>/dev/null; then
-    cat >> "$CFG_FILE" <<'CFG'
-
-# write DJ-friendly bpm and initialkey tags
-TRACKREC_ENRICH_DJ="0"
-CFG
-    echo 'Added missing default: TRACKREC_ENRICH_DJ="0"'
-  fi
+  append_cfg_if_missing "TRACKREC_ENRICH_WRITE" "1" "Enrich defaults"
+  append_cfg_if_missing "TRACKREC_ENRICH_FORCE" "0" "force overwrite existing enrich tags"
+  append_cfg_if_missing "TRACKREC_ENRICH_SET_YEAR" "1" "write standard year tag from Spotify release date"
+  append_cfg_if_missing "TRACKREC_ENRICH_SET_DATE" "0" "write standard date tag from Spotify release date"
+  append_cfg_if_missing "TRACKREC_ENRICH_SET_GENRE" "0" "write standard genre tag from Spotify artist genres"
+  append_cfg_if_missing "TRACKREC_ENRICH_DJ" "0" "write DJ-friendly bpm and initialkey tags"
 fi
 
 if [[ "$LINK_MODE" -eq 1 && "$USE_PROJECT_VENV" -eq 1 ]]; then
