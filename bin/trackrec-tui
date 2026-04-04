@@ -10,6 +10,11 @@ from typing import Optional
 from textual.app import App, ComposeResult
 from textual.widgets import Footer, Header, Static
 
+SCRIPT_PATH = Path(__file__).resolve()
+SCRIPT_DIR = SCRIPT_PATH.parent
+TRACKREC_RUN = SCRIPT_DIR / "trackrec-run"
+TRACKREC_STOP = SCRIPT_DIR / "trackrec-stop"
+
 CONFIG_FILE = Path.home() / ".config" / "trackrec" / "trackrec.conf"
 STATUS_FILE = Path(f"/run/user/{os.getuid()}/trackrec-run/recorder.status")
 
@@ -175,7 +180,7 @@ class TrackrecTUI(App):
             return
 
         player = self.config.get("TRACKREC_PLAYER", "spotify")
-        cmd = ["trackrec-run", player]
+        cmd = [str(TRACKREC_RUN), player]
         self.log_line(f"$ {' '.join(cmd)}")
 
         self.process = await asyncio.create_subprocess_exec(
@@ -206,9 +211,9 @@ class TrackrecTUI(App):
                 self.owns_process = False
 
     async def action_stop(self) -> None:
-        self.log_line("$ trackrec-stop")
+        self.log_line(f"$ {TRACKREC_STOP}")
         proc = await asyncio.create_subprocess_exec(
-            "trackrec-stop",
+            str(TRACKREC_STOP),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -235,7 +240,7 @@ class TrackrecTUI(App):
             self.log_line("stopping owned trackrec-run before exit...")
             try:
                 proc = await asyncio.create_subprocess_exec(
-                    "trackrec-stop",
+                    str(TRACKREC_STOP),
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )

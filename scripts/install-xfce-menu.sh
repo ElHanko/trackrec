@@ -68,8 +68,18 @@ EOD
 
 cat > "$LAUNCHER_DIR/tui.sh" <<'EOD'
 #!/usr/bin/env bash
-set -euo pipefail
-exec "$HOME/.local/bin/trackrec"
+set -uo pipefail
+
+echo "Starting trackrec TUI..."
+echo
+
+"$HOME/.local/bin/trackrec" tui
+rc=$?
+
+echo
+echo "trackrec tui exited with code: $rc"
+read -r -p "Press Enter to close..."
+exit "$rc"
 EOD
 
 cat > "$LAUNCHER_DIR/enrich-recordings.sh" <<'EOD'

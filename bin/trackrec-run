@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 TRACKREC_SETUP="$SCRIPT_DIR/trackrec-setup"
 TRACKREC_LISTEN_ON="$SCRIPT_DIR/trackrec-listen-on"
 TRACKREC_LISTEN_OFF="$SCRIPT_DIR/trackrec-listen-off"
 RECORDER="$SCRIPT_DIR/trackrec-recorder.py"
-VENV_PY="$PROJECT_DIR/.venv/bin/python"
 
 pattern="${1:-}"
 shift || true
@@ -205,28 +205,14 @@ extra_args=()
 dedupe_args=()
 [[ "$DEDUPE" -eq 1 ]] && dedupe_args+=(--dedupe)
 
-if [[ -x "$VENV_PY" ]]; then
-  exec "$VENV_PY" "$RECORDER" \
-    --source rec.monitor \
-    --out "$OUTDIR" \
-    --player "$PLAYER" \
-    --format "$FORMAT" \
-    --min-seconds "$MIN_SECONDS" \
-    --sample-rate "$SAMPLE_RATE" \
-    --autoskip "$AUTOSKIP" \
-    --autoskip-delay "$AUTOSKIP_DELAY" \
-    "${extra_args[@]}" \
-    "${dedupe_args[@]}"
-else
-  exec "$RECORDER" \
-    --source rec.monitor \
-    --out "$OUTDIR" \
-    --player "$PLAYER" \
-    --format "$FORMAT" \
-    --min-seconds "$MIN_SECONDS" \
-    --sample-rate "$SAMPLE_RATE" \
-    --autoskip "$AUTOSKIP" \
-    --autoskip-delay "$AUTOSKIP_DELAY" \
-    "${extra_args[@]}" \
-    "${dedupe_args[@]}"
-fi
+exec "$RECORDER" \
+  --source rec.monitor \
+  --out "$OUTDIR" \
+  --player "$PLAYER" \
+  --format "$FORMAT" \
+  --min-seconds "$MIN_SECONDS" \
+  --sample-rate "$SAMPLE_RATE" \
+  --autoskip "$AUTOSKIP" \
+  --autoskip-delay "$AUTOSKIP_DELAY" \
+  "${extra_args[@]}" \
+  "${dedupe_args[@]}"
