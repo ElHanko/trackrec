@@ -334,6 +334,12 @@ TRACKREC_FORCE_VOLUME="1"
 
 # TUI feature flags
 TRACKREC_TUI_ENABLE_ENRICH="0"
+
+# Stem processing (external tool integration)
+TRACKREC_STEM_MODE="off"
+TRACKREC_STEM_CMD=""
+TRACKREC_STEM_REMOTE_HOST=""
+TRACKREC_STEM_REMOTE_BASE=""
 CFG
   chmod 600 "$CFG_FILE" || true
   created_cfg=1
@@ -348,6 +354,10 @@ append_cfg_if_missing "TRACKREC_AUTOSKIP" "0" "automatically skip to the next tr
 append_cfg_if_missing "TRACKREC_AUTOSKIP_DELAY" "5" "delay in seconds before triggering MPRIS Next on duplicate autoskip"
 append_cfg_if_missing "TRACKREC_FORMAT" "flac" "output format: flac or mp3"
 append_cfg_if_missing "TRACKREC_TUI_ENABLE_ENRICH" "0" "TUI feature flags"
+append_cfg_if_missing "TRACKREC_STEM_MODE" "off" "stem processing mode: off, local, remote"
+append_cfg_if_missing "TRACKREC_STEM_CMD" "" "external stem command"
+append_cfg_if_missing "TRACKREC_STEM_REMOTE_HOST" "" "ssh host alias for remote stem processing"
+append_cfg_if_missing "TRACKREC_STEM_REMOTE_BASE" "" "remote base directory for stem jobs"
 
 if [[ "$created_cfg" -eq 1 ]]; then
   mkdir -p "$HOME/recordings" || true
@@ -432,7 +442,30 @@ Requires:
 
 NOTE
 fi
+cat <<'NOTE'
 
+Optional stem processing is supported via an external tool.
+
+Configure these keys in:
+  ~/.config/trackrec/trackrec.conf
+
+  TRACKREC_STEM_MODE="off|local|remote"
+  TRACKREC_STEM_CMD=""
+  TRACKREC_STEM_REMOTE_HOST=""
+  TRACKREC_STEM_REMOTE_BASE=""
+
+Examples:
+  local:
+    TRACKREC_STEM_MODE="local"
+    TRACKREC_STEM_CMD="/path/to/stem-batch.sh"
+
+  remote:
+    TRACKREC_STEM_MODE="remote"
+    TRACKREC_STEM_CMD="/path/to/stem-batch.sh"
+    TRACKREC_STEM_REMOTE_HOST="your-ssh-host-alias"
+    TRACKREC_STEM_REMOTE_BASE="/path/to/remote/stem-jobs"
+
+NOTE
 echo
 echo "Done."
 echo "Open a new login shell (or run: source ~/.profile) then test:"

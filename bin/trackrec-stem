@@ -1,0 +1,176 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CFG_FILE="$HOME/.config/trackrec/trackrec.conf"
+
+INPUT_DIR="${1:-}"
+if [[ -z "$INPUT_DIR" ]]; then
+  echo "Usage: trackrec-stem <recordings-dir>" >&2
+  exit 2
+fi
+
+INPUT_DIR="${INPUT_DIR/#\~/$HOME}"
+INPUT_DIR="${INPUT_DIR//\$HOME/$HOME}"
+
+if [[ ! -d "$INPUT_DIR" ]]; then
+  echo "ERROR: input directory does not exist: $INPUT_DIR" >&2
+  exit 2
+fi
+
+OUTPUT_DIR="$INPUT_DIR/stems"
+
+TRACKREC_STEM_MODE="off"
+TRACKREC_STEM_CMD=""
+TRACKREC_STEM_REMOTE_HOST=""
+TRACKREC_STEM_REMOTE_BASE=""
+
+load_config() {
+  [[ -f "$CFG_FILE" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" =~ ^# ]] && continue
+    [[ "$line" =~ ^TRACKREC_[A-Z0-9_]+= ]] && eval "$line"
+  done < "$CFG_FILE"
+}
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "ERROR: missing command: $1" >&2
+    exit 3
+  }
+}
+
+resolve_cmd_path() {
+  local cmd="$1"
+
+  [[ -n "$cmd" ]] || {
+    echo "ERROR: TRACKREC_STEM_CMD is empty" >&2
+    exit 2
+  }
+
+  if [[ "$cmd" == /* ]]; then
+    [[ -x "$cmd" ]] || {
+      echo "ERROR: stem command not executable: $cmd" >&2
+      exit 3
+    }
+    printf '%s\n' "$cmd"
+    return 0
+  fi
+
+  local resolved
+  resolved="$(command -v "$cmd" 2>/dev/null || true)"
+  [[ -n "$resolved" ]] || {
+    echo "ERROR: stem command not found in PATH: $cmd" >&2
+    exit 3
+  }
+
+  printf '%s\n' "$resolved"
+}
+
+load_config
+
+MODE="${TRACKREC_STEM_MODE:-off}"
+STEM_CMD="${TRACKREC_STEM_CMD:-}"
+REMOTE_HOST="${TRACKREC_STEM_REMOTE_HOST:-}"
+REMOTE_BASE="${TRACKREC_STEM_REMOTE_BASE:-}"
+
+case "$MODE" in
+  off)
+    echo "Stem processing is disabled (TRACKREC_STEM_MODE=off)." >&2
+    exit 2
+    ;;
+  local|remote)
+    ;;
+  *)
+    echo "ERROR: invalid TRACKREC_STEM_MODE: $MODE" >&2
+    exit 2
+    ;;
+esac
+
+mkdir -p "$OUTPUT_DIR"
+
+run_local() {
+  local cmd_path
+  cmd_path="$(resolve_cmd_path "$STEM_CMD")"
+
+  echo "[INFO] Stem mode: local"
+  echo "[INFO] Input : $INPUT_DIR"
+  echo "[INFO] Output: $OUTPUT_DIR"
+  echo "[INFO] Cmd   : $cmd_path"
+
+  exec "$cmd_path" --input-dir "$INPUT_DIR" --output-dir "$OUTPUT_DIR"
+}
+
+run_remote() {
+  [[ -n "$REMOTE_HOST" ]] || {
+    echo "ERROR: TRACKREC_STEM_REMOTE_HOST is empty" >&2
+    exit 2
+  }
+
+  [[ -n "$REMOTE_BASE" ]] || {
+    echo "ERROR: TRACKREC_STEM_REMOTE_BASE is empty" >&2
+    exit 2
+  }
+
+  [[ -n "$STEM_CMD" ]] || {
+    echo "ERROR: TRACKREC_STEM_CMD is empty" >&2
+    exit 2
+  }
+
+  need_cmd ssh
+  need_cmd rsync
+  need_cmd date
+
+  local job_id
+  job_id="job-$(date +%F_%H%M%S)"
+
+  local remote_job="$REMOTE_BASE/$job_id"
+  local remote_input="$remote_job/input"
+  local remote_output="$remote_job/output"
+
+  echo "[INFO] Stem mode   : remote"
+  echo "[INFO] SSH host    : $REMOTE_HOST"
+  echo "[INFO] Remote base : $REMOTE_BASE"
+  echo "[INFO] Remote job  : $remote_job"
+  echo "[INFO] Local input : $INPUT_DIR"
+  echo "[INFO] Local output: $OUTPUT_DIR"
+  echo "[INFO] Remote cmd  : $STEM_CMD"
+
+  echo "[STEP] Create remote job directories ..."
+  ssh "$REMOTE_HOST" "mkdir -p '$remote_input' '$remote_output'"
+
+  echo "[STEP] Upload audio files ..."
+  rsync -av \
+    --include='*/' \
+    --include='*.flac' \
+    --include='*.mp3' \
+    --include='*.wav' \
+    --exclude='*' \
+    "$INPUT_DIR"/ \
+    "$REMOTE_HOST:$remote_input/"
+
+  echo "[STEP] Run remote stem job ..."
+  ssh "$REMOTE_HOST" \
+    "'$STEM_CMD' --input-dir '$remote_input' --output-dir '$remote_output'"
+
+  echo "[STEP] Download stem results ..."
+  rsync -av \
+    "$REMOTE_HOST:$remote_output/" \
+    "$OUTPUT_DIR/"
+
+  echo "[STEP] Cleanup remote job ..."
+  ssh "$REMOTE_HOST" "rm -rf '$remote_job'"
+
+  echo "[DONE] Stem results available in: $OUTPUT_DIR"
+}
+
+case "$MODE" in
+  local)
+    run_local
+    ;;
+  remote)
+    run_remote
+    ;;
+esac

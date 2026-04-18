@@ -15,6 +15,7 @@ SCRIPT_DIR = SCRIPT_PATH.parent
 TRACKREC_RUN = SCRIPT_DIR / "trackrec-run"
 TRACKREC_STOP = SCRIPT_DIR / "trackrec-stop"
 TRACKREC_ENRICH = SCRIPT_DIR / "trackrec-enrich"
+TRACKREC_STEM = SCRIPT_DIR / "trackrec-stem"
 
 CONFIG_FILE = Path.home() / ".config" / "trackrec" / "trackrec.conf"
 STATUS_FILE = Path(f"/run/user/{os.getuid()}/trackrec-run/recorder.status")
@@ -40,6 +41,7 @@ class TrackrecTUI(App):
     BINDINGS = [
         ("s", "start", "Start"),
         ("e", "enrich", "Enrich"),
+        ("m", "stem", "Stem"),
         ("x", "stop", "Stop"),
         ("c", "config_view", "Config"),
         ("r", "reload", "Reload"),
@@ -50,7 +52,7 @@ class TrackrecTUI(App):
     process: Optional[asyncio.subprocess.Process] = None
     read_output_task: Optional[asyncio.Task] = None
     owns_process: bool = False
-    current_job: str = "idle"   # idle | record | enrich
+    current_job: str = "idle"   # idle | record | enrich | stem
     log_lines: list[str] = []
     status: dict[str, str] = {}
     config: dict[str, str] = {}
@@ -99,6 +101,10 @@ class TrackrecTUI(App):
             "TRACKREC_FOLLOW_INTERVAL",
             "TRACKREC_DEDUPE",
             "TRACKREC_FORCE_VOLUME",
+            "TRACKREC_STEM_MODE",
+            "TRACKREC_STEM_CMD",
+            "TRACKREC_STEM_REMOTE_HOST",
+            "TRACKREC_STEM_REMOTE_BASE",
         ]
 
         if self.enrich_enabled():
@@ -145,10 +151,13 @@ class TrackrecTUI(App):
             value = self.config.get(key, "")
             lines.append(f'{key}="{value}"')
 
+        hidden_keys = {"TRACKREC_TUI_ENABLE_ENRICH"}
         for key in sorted(self.config.keys()):
-            if key not in self.config_keys:
-                value = self.config.get(key, "")
-                lines.append(f'{key}="{value}"')
+            if key in hidden_keys:
+                continue
+        if key not in self.config_keys:
+            value = self.config.get(key, "")
+            lines.append(f'{key}="{value}"')
 
         CONFIG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.log_line("config saved")
@@ -173,6 +182,11 @@ class TrackrecTUI(App):
 
     def enrich_enabled(self) -> bool:
         return self.config.get("TRACKREC_TUI_ENABLE_ENRICH", "0") == "1"
+    
+    def stem_enabled(self) -> bool:
+        mode = self.config.get("TRACKREC_STEM_MODE", "off").strip().lower()
+        cmd = self.config.get("TRACKREC_STEM_CMD", "").strip()
+        return mode in {"local", "remote"} and bool(cmd)
 
     def on_off(self, value: Optional[str]) -> str:
         return "ON" if str(value or "0") == "1" else "OFF"
@@ -373,6 +387,37 @@ class TrackrecTUI(App):
         self.current_job = "enrich"
         self.read_output_task = asyncio.create_task(self.read_output())
 
+    async def action_stem(self) -> None:
+        if self.view != "main":
+            return
+
+        if not self.stem_enabled():
+            self.log_line("stem is not configured")
+            return
+
+        if self.process and self.process.returncode is None:
+            self.log_line("another job is already running")
+            return
+
+        if not TRACKREC_STEM.exists():
+            self.log_line("trackrec-stem is not installed")
+            return
+
+        outdir = self.config.get("TRACKREC_OUTDIR", str(Path.home() / "recordings"))
+        cmd = [str(TRACKREC_STEM), outdir]
+
+        self.log_line(f"$ {' '.join(cmd)}")
+
+        self.process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        self.owns_process = True
+        self.current_job = "stem"
+        self.read_output_task = asyncio.create_task(self.read_output())
+
     async def read_output(self) -> None:
         if not self.process or not self.process.stdout:
             return
@@ -392,6 +437,8 @@ class TrackrecTUI(App):
                     self.log_line(f"trackrec-run exited with code {rc}")
                 elif self.current_job == "enrich":
                     self.log_line(f"trackrec-enrich exited with code {rc}")
+                elif self.current_job == "stem":
+                    self.log_line(f"trackrec-stem exited with code {rc}")
                 else:
                     self.log_line(f"job exited with code {rc}")
                 self.process = None
@@ -402,7 +449,7 @@ class TrackrecTUI(App):
     async def action_stop(self) -> None:
         if self.view != "main":
             return
-        if self.current_job == "enrich":
+        if self.current_job in {"enrich", "stem"}:
             self.log_line("stop only applies to recording jobs")
             return
 
