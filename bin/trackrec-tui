@@ -155,9 +155,9 @@ class TrackrecTUI(App):
         for key in sorted(self.config.keys()):
             if key in hidden_keys:
                 continue
-        if key not in self.config_keys:
-            value = self.config.get(key, "")
-            lines.append(f'{key}="{value}"')
+            if key not in self.config_keys:
+                value = self.config.get(key, "")
+                lines.append(f'{key}="{value}"')
 
         CONFIG_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.log_line("config saved")
