@@ -449,6 +449,7 @@ class TrackrecTUI(App):
     async def action_stop(self) -> None:
         if self.view != "main":
             return
+
         if self.current_job in {"enrich", "stem"}:
             self.log_line("stop only applies to recording jobs")
             return
@@ -459,6 +460,7 @@ class TrackrecTUI(App):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
             if stdout:
@@ -466,9 +468,20 @@ class TrackrecTUI(App):
                     self.log_line(line.strip())
         except asyncio.TimeoutError:
             self.log_line("trackrec-stop timed out")
+            return
+
+        if self.process and self.process.returncode is None:
+            try:
+                rc = await asyncio.wait_for(self.process.wait(), timeout=3)
+                self.log_line(f"trackrec-run exited with code {rc}")
+            except asyncio.TimeoutError:
+                self.log_line("trackrec-run did not exit after stop")
+                return
+
+        self.process = None
         self.owns_process = False
-        if self.current_job == "record":
-            self.current_job = "idle"
+        self.current_job = "idle"
+        self.refresh_view()
 
     async def action_config_view(self) -> None:
         self.view = "config"
