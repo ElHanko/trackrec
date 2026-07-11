@@ -109,12 +109,18 @@ done
 STATE_DIR="/run/user/$(id -u)/trackrec-run"
 MAP_FILE="$STATE_DIR/moved-streams.tsv"
 SEEN_FILE="$STATE_DIR/seen-streams.txt"
+RECORDER_PID_FILE="$STATE_DIR/recorder.pid"
 mkdir -p "$STATE_DIR"
 : > "$MAP_FILE"
 : > "$SEEN_FILE"
 
 cleanup() {
   set +e
+
+  if [[ -n "${RECORDER_PID:-}" ]] && kill -0 "$RECORDER_PID" 2>/dev/null; then
+    kill -INT "$RECORDER_PID" >/dev/null 2>&1 || true
+    wait "$RECORDER_PID" >/dev/null 2>&1 || true
+  fi
 
   [[ "$LISTEN" -eq 1 ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1
 
@@ -131,7 +137,9 @@ cleanup() {
 
   rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 "$TRACKREC_SETUP"
 
@@ -206,7 +214,7 @@ extra_args=()
 dedupe_args=()
 [[ "$DEDUPE" -eq 1 ]] && dedupe_args+=(--dedupe)
 
-exec "$RECORDER" \
+"$RECORDER" \
   --source rec.monitor \
   --out "$OUTDIR" \
   --player "$PLAYER" \
@@ -216,4 +224,14 @@ exec "$RECORDER" \
   --autoskip "$AUTOSKIP" \
   --autoskip-delay "$AUTOSKIP_DELAY" \
   "${extra_args[@]}" \
-  "${dedupe_args[@]}"
+  "${dedupe_args[@]}" &
+RECORDER_PID="$!"
+printf '%s\n' "$RECORDER_PID" > "$RECORDER_PID_FILE"
+
+set +e
+wait "$RECORDER_PID"
+recorder_status="$?"
+set -e
+RECORDER_PID=""
+
+exit "$recorder_status"

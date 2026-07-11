@@ -4,7 +4,7 @@ set -euo pipefail
 WITH_ENRICH=0
 LINK_MODE=0
 
-for a in "${@:-}"; do
+for a in "$@"; do
   case "$a" in
     --with-enrich) WITH_ENRICH=1 ;;
     --link) LINK_MODE=1 ;;
@@ -116,6 +116,7 @@ CORE_TOOLS=(
   trackrec-run
   trackrec-setup
   trackrec-status
+  trackrec-stem
   trackrec-stop
   trackrec-tui
   trackrec-uninstall
@@ -239,6 +240,7 @@ LEGACY_WRAPPERS=(
   trackrec-listen-on
   trackrec-listen-off
   trackrec-normalize
+  trackrec-stem
   trackrec-tui
   trackrec-enrich
 )
