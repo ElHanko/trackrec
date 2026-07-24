@@ -469,20 +469,21 @@ class TrackrecTUI(App):
         )
 
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
             if stdout:
                 for line in stdout.decode(errors="replace").splitlines():
                     self.log_line(line.strip())
         except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
             self.log_line("trackrec-stop timed out")
             return
 
         if record_proc and record_proc.returncode is None:
             try:
-                rc = await asyncio.wait_for(record_proc.wait(), timeout=3)
-                self.log_line(f"trackrec-run exited with code {rc}")
+                await asyncio.wait_for(record_proc.wait(), timeout=7)
             except asyncio.TimeoutError:
-                self.log_line("trackrec-run did not exit after stop")
+                self.log_line("trackrec-run is still finalizing the current file")
                 return
 
         if self.process is record_proc:
@@ -593,11 +594,21 @@ class TrackrecTUI(App):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                 )
-                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
                 if stdout:
                     for line in stdout.decode(errors="replace").splitlines():
                         self.log_line(line.strip())
+
+                if self.process and self.process.returncode is None:
+                    try:
+                        await asyncio.wait_for(self.process.wait(), timeout=7)
+                    except asyncio.TimeoutError:
+                        self.log_line(
+                            "trackrec-run is still finalizing the current file"
+                        )
             except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
                 self.log_line("trackrec-stop timed out on exit")
             except Exception as e:
                 self.log_line(f"stop on exit failed: {e}")

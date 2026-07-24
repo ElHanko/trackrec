@@ -7,35 +7,121 @@ TRACKREC_LISTEN_OFF="$SCRIPT_DIR/trackrec-listen-off"
 
 STATE_DIR="/run/user/$(id -u)/trackrec-run"
 MAP_FILE="$STATE_DIR/moved-streams.tsv"
+SEEN_FILE="$STATE_DIR/seen-streams.txt"
 RECORDER_PID_FILE="$STATE_DIR/recorder.pid"
+
+restore_map=""
+cleanup_temp() {
+  [[ -n "$restore_map" ]] && rm -f "$restore_map"
+}
+trap cleanup_temp EXIT
+
+get_default_sink() {
+  pactl get-default-sink 2>/dev/null \
+    || pactl info 2>/dev/null \
+      | sed -n 's/^Default Sink: //p' \
+      | head -n1
+}
+
+sink_exists() {
+  local target="$1"
+
+  pactl list short sinks 2>/dev/null \
+    | awk -v target="$target" '
+        $1 == target || $2 == target {
+          found = 1
+        }
+        END {
+          exit(found ? 0 : 1)
+        }
+      '
+}
+
+stream_exists() {
+  local stream_id="$1"
+
+  pactl list short sink-inputs 2>/dev/null \
+    | awk -v stream_id="$stream_id" '
+        $1 == stream_id {
+          found = 1
+        }
+        END {
+          exit(found ? 0 : 1)
+        }
+      '
+}
+
+restore_streams() {
+  local map_file="$1"
+  local default_sink=""
+  local stream_id=""
+  local original_sink=""
+  local target_sink=""
+
+  [[ -s "$map_file" ]] || return 0
+
+  default_sink="$(get_default_sink || true)"
+
+  while IFS=$'\t' read -r stream_id original_sink; do
+    [[ "$stream_id" =~ ^[0-9]+$ ]] || continue
+    stream_exists "$stream_id" || continue
+
+    target_sink="$original_sink"
+    if [[ -z "$target_sink" ]] || ! sink_exists "$target_sink"; then
+      target_sink="$default_sink"
+    fi
+
+    if [[ -z "$target_sink" ]]; then
+      echo "Warning: no valid output sink found for stream #$stream_id" >&2
+      continue
+    fi
+
+    if pactl move-sink-input "$stream_id" "$target_sink" >/dev/null 2>&1; then
+      echo "Restored stream #$stream_id -> $target_sink"
+    else
+      echo "Warning: failed to restore stream #$stream_id -> $target_sink" >&2
+    fi
+  done < "$map_file"
+}
 
 recorder_pid=""
 if [[ -r "$RECORDER_PID_FILE" ]]; then
   read -r recorder_pid < "$RECORDER_PID_FILE" || true
 fi
 
+if [[ -s "$MAP_FILE" ]]; then
+  restore_map="$(mktemp "${XDG_RUNTIME_DIR:-/tmp}/trackrec-map.XXXXXX")"
+  cp -- "$MAP_FILE" "$restore_map"
+fi
+
+# Stop the follower immediately. Its loop and routing function both check
+# whether the runtime files still exist.
+rm -f "$SEEN_FILE"
+
 if [[ "$recorder_pid" =~ ^[0-9]+$ ]] && kill -0 "$recorder_pid" 2>/dev/null; then
   cmdline="$(tr '\0' ' ' < "/proc/$recorder_pid/cmdline" 2>/dev/null || true)"
+
   if [[ "$cmdline" == *trackrec-recorder.py* ]]; then
     kill -INT "$recorder_pid" 2>/dev/null || true
-
-    for _ in {1..50}; do
-      [[ -d "$STATE_DIR" ]] || break
-      sleep 0.1
-    done
   else
     echo "Warning: refusing to signal stale recorder PID $recorder_pid" >&2
   fi
 fi
 
-# Defensive cleanup for stale state or an interrupted supervisor.
-[[ -x "$TRACKREC_LISTEN_OFF" ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1 || true
+# Remove the runtime directory now, rather than waiting for trackrec-run.
+# This prevents the follower from routing Spotify back to rec while cleanup
+# is restoring the stream.
+rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
 
-if [[ -s "$MAP_FILE" ]]; then
-  while IFS=$'\t' read -r stream_id orig_sink; do
-    pactl move-sink-input "$stream_id" "$orig_sink" >/dev/null 2>&1 || true
-  done < "$MAP_FILE"
+[[ -x "$TRACKREC_LISTEN_OFF" ]] \
+  && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1 \
+  || true
+
+# Give a follower iteration that may already be in progress a moment to end.
+sleep 0.2
+
+if [[ -n "$restore_map" ]]; then
+  restore_streams "$restore_map"
 fi
 
-rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
 echo "trackrec stop: done"
