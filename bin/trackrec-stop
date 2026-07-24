@@ -1,15 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Stop recorder processes
-pkill -INT -f 'mpris_flac_recorder\.py' 2>/dev/null || true
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+TRACKREC_LISTEN_OFF="$SCRIPT_DIR/trackrec-listen-off"
 
-# Stop loopback if present
-command -v listen-off >/dev/null 2>&1 && listen-off >/dev/null 2>&1 || true
-
-# Try rollback if state exists
 STATE_DIR="/run/user/$(id -u)/trackrec-run"
 MAP_FILE="$STATE_DIR/moved-streams.tsv"
+RECORDER_PID_FILE="$STATE_DIR/recorder.pid"
+
+recorder_pid=""
+if [[ -r "$RECORDER_PID_FILE" ]]; then
+  read -r recorder_pid < "$RECORDER_PID_FILE" || true
+fi
+
+if [[ "$recorder_pid" =~ ^[0-9]+$ ]] && kill -0 "$recorder_pid" 2>/dev/null; then
+  cmdline="$(tr '\0' ' ' < "/proc/$recorder_pid/cmdline" 2>/dev/null || true)"
+  if [[ "$cmdline" == *trackrec-recorder.py* ]]; then
+    kill -INT "$recorder_pid" 2>/dev/null || true
+
+    for _ in {1..50}; do
+      [[ -d "$STATE_DIR" ]] || break
+      sleep 0.1
+    done
+  else
+    echo "Warning: refusing to signal stale recorder PID $recorder_pid" >&2
+  fi
+fi
+
+# Defensive cleanup for stale state or an interrupted supervisor.
+[[ -x "$TRACKREC_LISTEN_OFF" ]] && "$TRACKREC_LISTEN_OFF" >/dev/null 2>&1 || true
 
 if [[ -s "$MAP_FILE" ]]; then
   while IFS=$'\t' read -r stream_id orig_sink; do
@@ -18,4 +38,4 @@ if [[ -s "$MAP_FILE" ]]; then
 fi
 
 rm -rf "$STATE_DIR" >/dev/null 2>&1 || true
-echo "rec-stop: done"
+echo "trackrec stop: done"

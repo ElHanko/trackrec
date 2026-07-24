@@ -2,9 +2,10 @@
 set -euo pipefail
 
 BIN_DST="$HOME/.local/bin"
-APP_DIR="$BIN_DST/trackrec"
+APP_DIR="$HOME/.local/lib/trackrec"
 
 CORE_TOOLS=(
+  trackrec
   trackrec-recorder.py
   trackrec-listen-off
   trackrec-listen-on
@@ -13,7 +14,9 @@ CORE_TOOLS=(
   trackrec-run
   trackrec-setup
   trackrec-status
+  trackrec-stem
   trackrec-stop
+  trackrec-tui
   trackrec-uninstall
 )
 

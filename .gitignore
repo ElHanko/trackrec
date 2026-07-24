@@ -25,3 +25,8 @@ recordings/
 .venv/
 venv/
 env/
+
+# stem test data
+scripts/input
+scripts/models
+scripts/output
